@@ -10,6 +10,7 @@ use Kb24Rest\Portal\CurrentUser;
 use Kb24Rest\Portal\Portal;
 use Kb24Rest\Portal\PortalStore;
 use Kb24Rest\Portal\UserResolver;
+use Kb24Rest\Structure\StructureService;
 
 /**
  * Маршруты блока 1:
@@ -17,6 +18,9 @@ use Kb24Rest\Portal\UserResolver;
  *   /app        путь обработчика, главная страница в iframe
  *   /api/me     кто открыл приложение (проверка токена пользователя на сервере)
  *   /api/check  вызов REST с сервера по сохранённому токену приложения
+ * Блок 2:
+ *   /api/structure  отделы, руководители и цепочка руководителей текущего сотрудника
+ *   /api/hr-compare руководители по новой структуре (humanresources) для сравнения с department.get
  */
 final class App
 {
@@ -25,6 +29,7 @@ final class App
         private readonly OAuthClient $oauth,
         private readonly RestClient $rest,
         private readonly UserResolver $users,
+        private readonly StructureService $structure,
         private readonly string $templates,
     ) {
     }
@@ -38,6 +43,8 @@ final class App
                 $path === '/' || $path === '/app' => $this->render('app.php', []),
                 $path === '/api/me' => $this->json($this->me($this->currentUser($server))),
                 $path === '/api/check' => $this->json($this->check($this->currentUser($server))),
+                $path === '/api/structure' => $this->json($this->structure($this->currentUser($server))),
+                $path === '/api/hr-compare' => $this->json($this->hrCompare($this->currentUser($server))),
                 default => $this->notFound(),
             };
         }
@@ -90,6 +97,45 @@ final class App
             ],
             'tokenExpiresAt' => $user->portal->expiresAt,
         ];
+    }
+
+    private function structure(CurrentUser $user): array
+    {
+        $chart = $this->structure->orgChart($user->portal);
+        $departments = [];
+        foreach ($chart->all() as $department)
+        {
+            $departments[] = [
+                'id' => $department->id,
+                'name' => $department->name,
+                'parentId' => $department->parentId,
+                'headUserId' => $department->headUserId,
+            ];
+        }
+
+        return [
+            'userId' => $user->userId,
+            'myDepartments' => $this->structure->departmentsOf($user->portal, $user->userId),
+            'headChain' => $this->structure->headChain($user->portal, $chart, $user->userId),
+            'departments' => $departments,
+        ];
+    }
+
+    private function hrCompare(CurrentUser $user): array
+    {
+        $chart = $this->structure->orgChart($user->portal);
+        $nodes = $this->structure->humanResourcesHeads($user->portal);
+        foreach ($nodes as &$node)
+        {
+            // Предполагаем, что код доступа D<ID> или DR<ID> указывает на отдел из department.get. Это и проверяем.
+            $departmentId = preg_match('/^DR?(\d+)$/', $node['accessCode'], $m) ? (int)$m[1] : null;
+            $department = $departmentId !== null ? $chart->department($departmentId) : null;
+            $node['departmentGetId'] = $department?->id;
+            $node['departmentGetHead'] = $department?->headUserId;
+            $node['headsMatch'] = $department !== null && in_array($department->headUserId, $node['heads'], true);
+        }
+
+        return ['nodes' => $nodes];
     }
 
     private function currentUser(array $server): CurrentUser

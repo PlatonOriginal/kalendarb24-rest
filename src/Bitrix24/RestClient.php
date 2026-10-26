@@ -12,6 +12,9 @@ use Kb24Rest\Portal\PortalStore;
  */
 final class RestClient
 {
+    /** @var array<string, Portal> портал с последними токенами после обновления, по member_id */
+    private array $fresh = [];
+
     public function __construct(
         private readonly HttpTransport $http,
         private readonly OAuthClient $oauth,
@@ -25,6 +28,15 @@ final class RestClient
      */
     public function call(Portal $portal, string $method, array $params = []): mixed
     {
+        return $this->callRaw($portal, $method, $params)['result'] ?? null;
+    }
+
+    /**
+     * @return array<string, mixed> весь ответ, вместе с next и total
+     */
+    private function callRaw(Portal $portal, string $method, array $params): array
+    {
+        $portal = $this->fresh[$portal->memberId] ?? $portal;
         if ($portal->expiresAt <= time() + 60)
         {
             $portal = $this->refresh($portal);
@@ -36,6 +48,50 @@ final class RestClient
             $portal = $this->refresh($portal);
             $body = $this->post($portal, $method, $params);
         }
+        if (isset($body['error']))
+        {
+            throw RestException::fromBody($body);
+        }
+
+        return $body;
+    }
+
+    /**
+     * Все страницы списочного метода (по 50 записей, параметр start).
+     *
+     * @param array<string, mixed> $params
+     * @return list<mixed>
+     */
+    public function listAll(Portal $portal, string $method, array $params = []): array
+    {
+        $items = [];
+        $start = 0;
+        do
+        {
+            $body = $this->callRaw($portal, $method, $params + ['start' => $start]);
+            $items = array_merge($items, (array)($body['result'] ?? []));
+            $start = isset($body['next']) ? (int)$body['next'] : null;
+        }
+        while ($start !== null);
+
+        return $items;
+    }
+
+    /**
+     * Метод REST 3.0: адрес /rest/api/, тело JSON.
+     * https://apidocs.bitrix24.com/api-reference/rest-v3/humanresources/index.html
+     *
+     * @param array<string, mixed> $params
+     */
+    public function callV3(Portal $portal, string $method, array $params = []): mixed
+    {
+        $portal = $this->fresh[$portal->memberId] ?? $portal;
+        if ($portal->expiresAt <= time() + 60)
+        {
+            $portal = $this->refresh($portal);
+        }
+        $url = preg_replace('~/rest/$~', '/rest/api/', $portal->clientEndpoint) . $method;
+        $body = $this->http->postJson($url, $params + ['auth' => $portal->accessToken])['body'];
         if (isset($body['error']))
         {
             throw RestException::fromBody($body);
@@ -71,6 +127,6 @@ final class RestClient
         $portal = $portal->withTokens($tokens);
         $this->portals->save($portal);
 
-        return $portal;
+        return $this->fresh[$portal->memberId] = $portal;
     }
 }

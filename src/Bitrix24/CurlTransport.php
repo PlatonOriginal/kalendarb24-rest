@@ -13,6 +13,15 @@ final class CurlTransport implements HttpTransport
         ]);
     }
 
+    public function postJson(string $url, array $params): array
+    {
+        return $this->send($url, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($params, JSON_UNESCAPED_UNICODE),
+            CURLOPT_HTTPHEADER => ['Accept: application/json', 'Content-Type: application/json'],
+        ]);
+    }
+
     public function get(string $url, array $query): array
     {
         return $this->send($url . '?' . http_build_query($query), []);
