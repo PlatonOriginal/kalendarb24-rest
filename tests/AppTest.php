@@ -31,7 +31,7 @@ final class AppTest extends TestCase
     {
         $http = new FakeTransport([[
             'access_token' => 'a', 'refresh_token' => 'r', 'expires' => time() + 3600,
-            'member_id' => 'real-member', 'domain' => 'real.bitrix24.ru',
+            'member_id' => 'real-member', 'domain' => 'oauth.bitrix.info',
             'client_endpoint' => 'https://real.bitrix24.ru/rest/', 'user_id' => 1,
         ]]);
         $store = new MemoryPortalStore();
@@ -42,6 +42,7 @@ final class AppTest extends TestCase
         self::assertArrayHasKey('real-member', $store->portals);
         self::assertArrayNotHasKey('forged', $store->portals);
         self::assertSame(1, $store->portals['real-member']->installedBy);
+        self::assertSame('real.bitrix24.ru', $store->portals['real-member']->domain);
     }
 
     public function testApiMeReturnsOnlyIds(): void

@@ -30,7 +30,8 @@ final class TokenSet
             (string)$body['refresh_token'],
             (int)($body['expires'] ?? (time() + (int)($body['expires_in'] ?? 3600))),
             (string)$body['member_id'],
-            (string)$body['domain'],
+            // Поле domain в ответе содержит адрес сервера авторизации (oauth.bitrix.info), а не портала
+            (string)parse_url((string)$body['client_endpoint'], PHP_URL_HOST),
             (string)$body['client_endpoint'],
             (int)($body['user_id'] ?? 0),
         );
