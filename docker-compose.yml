@@ -1,0 +1,22 @@
+# Порт 8443, чтобы не пересекаться с env-docker коробки (80/443)
+services:
+  app:
+    build: docker/php
+    ports:
+      - "8443:443"
+    env_file: .env
+    volumes:
+      - .:/var/www/app
+    depends_on:
+      - db
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-kb24rest}
+      MYSQL_USER: ${DB_USER:-kb24rest}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-kb24rest}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - dbdata:/var/lib/mysql
+volumes:
+  dbdata:
