@@ -1,0 +1,5 @@
+/vendor/
+/.env
+/docker/certs/*
+!/docker/certs/.gitkeep
+.phpunit.result.cache
