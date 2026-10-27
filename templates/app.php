@@ -19,6 +19,12 @@
     <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
     <tbody></tbody>
 </table>
+<h2>Блок 3: хранилище данных в портале</h2>
+<p class="hint">Таблицу прав и пробную запись проверяйте под администратором, прямой доступ из браузера под обычным сотрудником.</p>
+<table id="block3">
+    <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
+    <tbody></tbody>
+</table>
 <script src="/assets/app.js"></script>
 </body>
 </html>

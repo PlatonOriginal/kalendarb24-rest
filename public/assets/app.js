@@ -12,9 +12,10 @@
     }
 
     // Запрос к нашему серверу с токеном текущего пользователя
-    function api(path) {
+    function api(path, method) {
         var auth = BX24.getAuth();
         return fetch(path, {
+            method: method || 'GET',
             headers: {
                 'X-B24-Auth': auth.access_token,
                 'X-B24-Member': auth.member_id
@@ -113,8 +114,64 @@
         });
     }
 
+    function call(method, params) {
+        return new Promise(function (resolve) {
+            BX24.callMethod(method, params, function (result) {
+                resolve(result.error() ? { error: result.error().toString() } : { data: result.data() });
+            });
+        });
+    }
+
+    function block3() {
+        api('/api/me').then(function (me) {
+            if (me.isAdmin) {
+                api('/api/storage').then(function (data) {
+                    var expected = 'U' + data.installedBy;
+                    var closed = data.storages.every(function (s) {
+                        var codes = Object.keys(s.rights);
+                        return codes.length === 1 && codes[0] === expected && s.rights[expected] === 'X';
+                    });
+                    row('block3', 'entity.add / entity.item.property.add: хранилища и свойства', true, {
+                        createdStorages: data.createdStorages,
+                        addedProperties: data.addedProperties,
+                        storages: data.storages.map(function (s) { return s.entity + ': ' + s.properties.join(', '); })
+                    });
+                    row('block3', 'entity.rights: управление только у ' + expected + ' (установил приложение)', closed,
+                        data.storages.map(function (s) { return s.entity + ' ' + JSON.stringify(s.rights); }).join('\n'));
+                }).catch(function (error) {
+                    row('block3', '/api/storage: нужно право «Хранилище данных (entity)»', false, error);
+                });
+            }
+
+            api('/api/storage/probe', 'POST').then(function (data) {
+                row('block3', 'Сервер: запись, изменение, чтение, удаление (' + data.milliseconds + ' мс)', data.deleted, data);
+                row('block3', 'entity.item.update меняет только переданные свойства', data.updateKeepsOtherProperties,
+                    data.updateKeepsOtherProperties
+                        ? 'да, KIND сохранился после изменения STATUS'
+                        : 'нет, после изменения STATUS пропали другие свойства: при обновлении передаём все');
+            }).catch(function (error) {
+                row('block3', 'Сервер: пробная запись', false, error);
+            });
+
+            // Под токеном самого сотрудника данные приложения должны быть закрыты
+            var who = me.isAdmin ? 'вы администратор, проверьте под обычным сотрудником' : 'обычный сотрудник';
+            call('entity.item.get', { ENTITY: 'kbreq' }).then(function (read) {
+                row('block3', 'Браузер: чтение заявок токеном сотрудника (' + who + ')', me.isAdmin || !!read.error,
+                    read.error ? 'закрыто: ' + read.error : 'открыто, записей: ' + read.data.length);
+            });
+            call('entity.item.add', { ENTITY: 'kbreq', NAME: 'browser_probe' }).then(function (write) {
+                if (!write.error) {
+                    call('entity.item.delete', { ENTITY: 'kbreq', ID: write.data });
+                }
+                row('block3', 'Браузер: запись токеном сотрудника (' + who + ')', me.isAdmin || !!write.error,
+                    write.error ? 'закрыто: ' + write.error : 'открыто, запись ' + write.data + ' создана и удалена');
+            });
+        });
+    }
+
     BX24.init(function () {
         block1();
         block2();
+        block3();
     });
 })();
