@@ -8,3 +8,24 @@ th { font-weight: 600; background: #f5f7f8; }
 .ok { color: #2fc6a1; }
 .fail { color: #ff5752; }
 pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+.tabs { display: flex; gap: 16px; border-bottom: 1px solid #e6e9ec; margin: 0 0 16px; }
+.tabs a { padding: 8px 0; color: #525c69; text-decoration: none; border-bottom: 2px solid transparent; }
+.tabs a.active { color: #333; border-bottom-color: #2fc6f6; }
+.message { padding: 8px 12px; border-radius: 4px; background: #fff3cd; max-width: 900px; }
+.message.error { background: #ffe1e0; }
+.form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; max-width: 900px; }
+.form h2 { width: 100%; margin-top: 0; }
+.form label { display: flex; flex-direction: column; gap: 4px; color: #525c69; }
+input, select, button { font: inherit; padding: 6px 8px; }
+button { cursor: pointer; border: 1px solid #c6cdd3; background: #fff; border-radius: 4px; }
+button.primary { background: #bbed21; border-color: #bbed21; }
+button.danger { color: #ff5752; }
+.list tbody tr { cursor: pointer; }
+.list tbody tr:hover { background: #f5f7f8; }
+.card dl { display: grid; grid-template-columns: 180px 1fr; gap: 6px 12px; max-width: 900px; }
+.card dt { color: #828b95; }
+.card dd { margin: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; align-items: center; }
+.status { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #eef2f4; }
+.status.approved { background: #e5f4e4; }
+.status.rejected, .status.withdrawn { background: #f0efec; color: #828b95; }

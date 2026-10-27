@@ -22,4 +22,17 @@ final class MemoryPortalStore implements PortalStore
 
         return $this->portals[$portal->memberId] = $portal;
     }
+
+    /** @var array<string, string> */
+    public array $storageVersions = [];
+
+    public function storageVersion(string $memberId): ?string
+    {
+        return $this->storageVersions[$memberId] ?? null;
+    }
+
+    public function setStorageVersion(string $memberId, string $version): void
+    {
+        $this->storageVersions[$memberId] = $version;
+    }
 }

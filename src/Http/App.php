@@ -13,6 +13,11 @@ use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\Kinds;
+use Kb24Rest\Vacation\RejectReasons;
+use Kb24Rest\Vacation\RequestService;
+use Kb24Rest\Vacation\RoleService;
+use Kb24Rest\Vacation\VacationError;
 
 /**
  * Маршруты блока 1:
@@ -26,6 +31,14 @@ use Kb24Rest\Structure\StructureService;
  * Блок 3:
  *   /api/storage        (администратор) создаёт недостающие хранилища entity.*, показывает их свойства и права
  *   /api/storage/probe  (POST) сервер пишет, меняет, читает и удаляет пробную запись
+ * Блок 3, заявки:
+ *   /api/vacation              кто я, роли, виды отсутствий, причины отказа
+ *   /api/requests/mine         мои заявки
+ *   /api/requests/approve      заявки, которые ждут моего решения
+ *   /api/requests              (POST kind, dateFrom, dateTo) подать заявку
+ *   /api/requests/<id>         карточка заявки с историей и доступными действиями
+ *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
+ *   /api/settings/roles        (POST, администратор) директор и сотрудники ОК
  */
 final class App
 {
@@ -36,6 +49,8 @@ final class App
         private readonly UserResolver $users,
         private readonly StructureService $structure,
         private readonly EntityStorage $storage,
+        private readonly RoleService $roles,
+        private readonly RequestService $requests,
         private readonly string $templates,
     ) {
     }
@@ -52,10 +67,27 @@ final class App
                 $path === '/api/structure' => $this->json($this->structure($this->currentUser($server))),
                 $path === '/api/hr-compare' => $this->json($this->hrCompare($this->currentUser($server))),
                 $path === '/api/storage' => $this->json($this->storageInfo($this->currentAdmin($server))),
-                $path === '/api/storage/probe' && ($server['REQUEST_METHOD'] ?? '') === 'POST'
+                $path === '/api/storage/probe' && $this->isPost($server)
                     => $this->json($this->storageProbe($this->currentUser($server))),
+                $path === '/api/vacation' => $this->json($this->vacation($this->currentUser($server))),
+                $path === '/api/requests/mine' => $this->json(['items' => $this->requests->mine($this->currentUser($server))]),
+                $path === '/api/requests/approve' => $this->json(['items' => $this->requests->toApprove($this->currentUser($server))]),
+                $path === '/api/requests' && $this->isPost($server) => $this->json($this->requests->create(
+                    $this->currentUser($server),
+                    (string)($post['kind'] ?? ''),
+                    (string)($post['dateFrom'] ?? ''),
+                    (string)($post['dateTo'] ?? ''),
+                )),
+                (bool)preg_match('~^/api/requests/(\d+)$~', $path, $m) => $this->json($this->requests->card($this->currentUser($server), (int)$m[1])),
+                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw)$~', $path, $m) && $this->isPost($server)
+                    => $this->json($this->decide($this->currentUser($server), (int)$m[1], $m[2], $post)),
+                $path === '/api/settings/roles' && $this->isPost($server) => $this->json($this->saveRoles($this->currentAdmin($server), $post)),
                 default => $this->notFound(),
             };
+        }
+        catch (VacationError $e)
+        {
+            $this->json(['error' => 'vacation', 'message' => $e->getMessage()], 422);
         }
         catch (RestException $e)
         {
@@ -84,7 +116,8 @@ final class App
 
         try
         {
-            $this->storage->ensure($portal);
+            // При установке проверяем всегда: после удаления приложения портал мог стереть хранилища
+            $this->ensureStorage($portal, true);
         }
         catch (RestException $e)
         {
@@ -113,7 +146,10 @@ final class App
                 $portal = $this->portals->findByMemberId($tokens->memberId);
                 if ($portal !== null && $tokens->userId === $portal->installedBy)
                 {
-                    $this->portals->save($portal->withTokens($tokens));
+                    $portal = $portal->withTokens($tokens);
+                    $this->portals->save($portal);
+                    // Новые хранилища и свойства из следующих версий появляются без переустановки
+                    $this->ensureStorage($portal);
                 }
             }
             catch (RestException)
@@ -195,9 +231,55 @@ final class App
         return ['nodes' => $nodes];
     }
 
+    private function vacation(CurrentUser $user): array
+    {
+        return [
+            'userId' => $user->userId,
+            'isAdmin' => $user->isAdmin,
+            'roles' => $this->roles->roles($user->portal),
+            'kinds' => array_map(static fn(array $kind) => $kind['name'], Kinds::all()),
+            'reasons' => RejectReasons::all(),
+        ];
+    }
+
+    private function decide(CurrentUser $user, int $id, string $action, array $post): array
+    {
+        return match ($action)
+        {
+            'approve' => $this->requests->approve($user, $id),
+            'reject' => $this->requests->reject($user, $id, (string)($post['reason'] ?? '')),
+            'withdraw' => $this->requests->withdraw($user, $id),
+        };
+    }
+
+    private function saveRoles(CurrentUser $user, array $post): array
+    {
+        $director = (int)($post['director'] ?? 0);
+        $hr = array_map('intval', array_filter(explode(',', (string)($post['hr'] ?? ''))));
+        $this->roles->set($user->portal, RoleService::DIRECTOR, $director > 0 ? [$director] : []);
+        $this->roles->set($user->portal, RoleService::HR, $hr);
+
+        return $this->roles->roles($user->portal);
+    }
+
+    private function ensureStorage(Portal $portal, bool $force = false): void
+    {
+        if ($force || $this->portals->storageVersion($portal->memberId) !== Schema::version())
+        {
+            $this->storage->ensure($portal);
+            $this->portals->setStorageVersion($portal->memberId, Schema::version());
+        }
+    }
+
+    private function isPost(array $server): bool
+    {
+        return ($server['REQUEST_METHOD'] ?? '') === 'POST';
+    }
+
     private function storageInfo(CurrentUser $user): array
     {
         $ensure = $this->storage->ensure($user->portal);
+        $this->portals->setStorageVersion($user->portal->memberId, Schema::version());
         $storages = [];
         foreach (Schema::storages() as $entity => $storage)
         {
