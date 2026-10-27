@@ -1,0 +1,24 @@
+# Порты 8443 и 8080, чтобы не пересекаться с env-docker коробки (80/443).
+# 8080 (http) нужен только для туннеля: портал требует публичный адрес обработчика.
+services:
+  app:
+    build: docker/php
+    ports:
+      - "8443:443"
+      - "8080:80"
+    env_file: .env
+    volumes:
+      - .:/var/www/app
+    depends_on:
+      - db
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-kb24rest}
+      MYSQL_USER: ${DB_USER:-kb24rest}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-kb24rest}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - dbdata:/var/lib/mysql
+volumes:
+  dbdata:
