@@ -149,6 +149,7 @@
     function checkStorageAccess(me) {
         api('/api/storage/probe', 'POST').then(function (data) {
             row('block3', 'Сервер: запись, изменение, чтение, удаление (' + data.milliseconds + ' мс)', data.deleted, data);
+            checkBrowserRead(me, data.canaryId);
             row('block3', 'entity.item.update меняет только переданные свойства', data.updateKeepsOtherProperties,
                 data.updateKeepsOtherProperties
                     ? 'да, KIND сохранился после изменения STATUS'
@@ -159,16 +160,22 @@
 
         // Под токеном самого сотрудника данные приложения должны быть закрыты
         var who = me.isAdmin ? 'вы администратор, проверьте под обычным сотрудником' : 'обычный сотрудник';
-        call('entity.item.get', { ENTITY: 'kbreq' }).then(function (read) {
-            row('block3', 'Браузер: чтение заявок токеном сотрудника (' + who + ')', me.isAdmin || !!read.error,
-                read.error ? 'закрыто: ' + read.error : 'открыто, записей: ' + read.data.length);
-        });
         call('entity.item.add', { ENTITY: 'kbreq', NAME: 'browser_probe' }).then(function (write) {
             if (!write.error) {
                 call('entity.item.delete', { ENTITY: 'kbreq', ID: write.data });
             }
             row('block3', 'Браузер: запись токеном сотрудника (' + who + ')', me.isAdmin || !!write.error,
                 write.error ? 'закрыто: ' + write.error : 'открыто, запись ' + write.data + ' создана и удалена');
+        });
+    }
+
+    // В истории всегда есть контрольная запись сервера, поэтому пустой ответ значит, что чтение закрыто
+    function checkBrowserRead(me, canaryId) {
+        var who = me.isAdmin ? 'вы администратор, проверьте под обычным сотрудником' : 'обычный сотрудник';
+        call('entity.item.get', { ENTITY: 'kbhist', FILTER: { ID: canaryId } }).then(function (read) {
+            var closed = !!read.error || read.data.length === 0;
+            row('block3', 'Браузер: чтение контрольной записи ' + canaryId + ' токеном сотрудника (' + who + ')', me.isAdmin || closed,
+                read.error ? 'закрыто: ' + read.error : (closed ? 'закрыто: запись не видна' : 'открыто: запись видна'));
         });
     }
 

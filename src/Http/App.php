@@ -230,14 +230,23 @@ final class App
         $values = $found[0]['PROPERTY_VALUES'] ?? [];
         $this->storage->delete($portal, Schema::REQUESTS, $id);
         $afterDelete = $this->storage->find($portal, Schema::REQUESTS, ['ID' => $id]);
+        $milliseconds = (int)round((microtime(true) - $started) * 1000);
+
+        // Постоянная контрольная запись: по ней браузер проверяет, видит ли сотрудник чужие данные.
+        // Пустой ответ на пустом хранилище ничего не доказывает.
+        $canary = $this->storage->find($portal, Schema::HISTORY, ['PROPERTY_ACTION' => 'canary']);
+        $canaryId = $canary !== []
+            ? (int)$canary[0]['ID']
+            : $this->storage->add($portal, Schema::HISTORY, 'canary', ['ACTION' => 'canary', 'ACTOR_ID' => $portal->installedBy]);
 
         return [
+            'canaryId' => $canaryId,
             'itemId' => $id,
             'createdBy' => isset($found[0]['CREATED_BY']) ? (int)$found[0]['CREATED_BY'] : null,
             'valuesAfterUpdate' => $values,
             'updateKeepsOtherProperties' => ($values['KIND'] ?? null) === 'probe',
             'deleted' => $afterDelete === [],
-            'milliseconds' => (int)round((microtime(true) - $started) * 1000),
+            'milliseconds' => $milliseconds,
         ];
     }
 

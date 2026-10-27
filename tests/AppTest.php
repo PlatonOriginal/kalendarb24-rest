@@ -121,6 +121,8 @@ final class AppTest extends TestCase
             ['result' => [['ID' => '55', 'CREATED_BY' => '1', 'PROPERTY_VALUES' => ['KIND' => 'probe', 'STATUS' => 'probe_updated', 'USER_ID' => '7']]]],
             ['result' => true],
             ['result' => []],
+            ['result' => []],
+            ['result' => 60],
         ]);
 
         $json = $this->request($this->app($http, $store), '/api/storage/probe', [], [
@@ -129,6 +131,8 @@ final class AppTest extends TestCase
 
         $data = json_decode($json, true);
         self::assertSame(55, $data['itemId']);
+        self::assertSame(60, $data['canaryId']);
+        self::assertSame(['ACTION' => 'canary', 'ACTOR_ID' => 1], $http->requests[8]['params']['PROPERTY_VALUES']);
         self::assertTrue($data['updateKeepsOtherProperties']);
         self::assertTrue($data['deleted']);
         self::assertSame(7, $http->requests[2]['params']['PROPERTY_VALUES']['USER_ID']);
