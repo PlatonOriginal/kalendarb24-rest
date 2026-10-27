@@ -134,4 +134,34 @@ final class AppTest extends TestCase
         self::assertSame(7, $http->requests[2]['params']['PROPERTY_VALUES']['USER_ID']);
         self::assertSame('a', $http->requests[2]['params']['auth']);
     }
+
+    public function testOpeningAppByInstallerRenewsStoredTokens(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
+        $http = new FakeTransport([[
+            'access_token' => 'new', 'refresh_token' => 'new-r', 'expires' => time() + 3600,
+            'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 1,
+        ]]);
+
+        $html = $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid', 'member_id' => 'm1']);
+
+        self::assertStringContainsString('block3', $html);
+        self::assertSame('new', $store->portals['m1']->accessToken);
+        self::assertSame(1, $store->portals['m1']->installedBy);
+    }
+
+    public function testOpeningAppByOtherUserKeepsAppTokens(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
+        $http = new FakeTransport([[
+            'access_token' => 'user', 'refresh_token' => 'user-r', 'expires' => time() + 3600,
+            'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 7,
+        ]]);
+
+        $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid']);
+
+        self::assertSame('old', $store->portals['m1']->accessToken);
+    }
 }

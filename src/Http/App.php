@@ -46,7 +46,7 @@ final class App
         {
             match (true) {
                 $path === '/install' => $this->install($post),
-                $path === '/' || $path === '/app' => $this->render('app.php', []),
+                $path === '/' || $path === '/app' => $this->openApp($post),
                 $path === '/api/me' => $this->json($this->me($this->currentUser($server))),
                 $path === '/api/check' => $this->json($this->check($this->currentUser($server))),
                 $path === '/api/structure' => $this->json($this->structure($this->currentUser($server))),
@@ -95,6 +95,34 @@ final class App
         }
 
         $this->render('install.php', ['error' => null]);
+    }
+
+    /**
+     * Портал присылает в обработчик свежие AUTH_ID и REFRESH_ID того, кто открыл приложение.
+     * Если открыл тот, кто устанавливал, обновляем сохранённые токены: так сервер получает права,
+     * добавленные приложению после установки (токен, обновлённый через refresh_token, сохраняет старые права).
+     */
+    private function openApp(array $post): void
+    {
+        $refreshToken = (string)($post['REFRESH_ID'] ?? '');
+        if ($refreshToken !== '')
+        {
+            try
+            {
+                $tokens = $this->oauth->refresh($refreshToken);
+                $portal = $this->portals->findByMemberId($tokens->memberId);
+                if ($portal !== null && $tokens->userId === $portal->installedBy)
+                {
+                    $this->portals->save($portal->withTokens($tokens));
+                }
+            }
+            catch (RestException)
+            {
+                // Страница работает и без этого: токены приложения остаются прежними
+            }
+        }
+
+        $this->render('app.php', []);
     }
 
     private function me(CurrentUser $user): array
