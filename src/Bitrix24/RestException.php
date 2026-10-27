@@ -15,6 +15,13 @@ final class RestException extends \RuntimeException
      */
     public static function fromBody(array $body): self
     {
-        return new self((string)($body['error'] ?? 'unknown_error'), (string)($body['error_description'] ?? ''));
+        // REST 3.0 отдаёт ошибку объектом, классический REST строкой
+        $error = $body['error'] ?? 'unknown_error';
+        if (is_array($error))
+        {
+            return new self((string)($error['code'] ?? 'unknown_error'), (string)($error['message'] ?? ''));
+        }
+
+        return new self((string)$error, (string)($body['error_description'] ?? ''));
     }
 }

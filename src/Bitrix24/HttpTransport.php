@@ -12,6 +12,14 @@ interface HttpTransport
     public function post(string $url, array $params): array;
 
     /**
+     * POST с JSON-телом, нужен для методов REST 3.0 (/rest/api/).
+     *
+     * @param array<string, mixed> $params
+     * @return array{status: int, body: array<string, mixed>}
+     */
+    public function postJson(string $url, array $params): array;
+
+    /**
      * @param array<string, mixed> $query
      * @return array{status: int, body: array<string, mixed>}
      */

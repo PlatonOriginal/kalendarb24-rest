@@ -23,6 +23,11 @@ final class FakeTransport implements HttpTransport
         return $this->next('POST', $url, $params);
     }
 
+    public function postJson(string $url, array $params): array
+    {
+        return $this->next('POST_JSON', $url, $params);
+    }
+
     public function get(string $url, array $query): array
     {
         return $this->next('GET', $url, $query);

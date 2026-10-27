@@ -1,5 +1,6 @@
 body { font: 14px/1.5 "Open Sans", Arial, sans-serif; color: #333; margin: 24px; }
 h1 { font-size: 22px; font-weight: 400; margin: 0 0 8px; }
+h2 { font-size: 16px; font-weight: 600; margin: 24px 0 8px; }
 .hint { color: #828b95; margin: 0 0 16px; }
 table { border-collapse: collapse; width: 100%; max-width: 900px; }
 th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e6e9ec; vertical-align: top; }

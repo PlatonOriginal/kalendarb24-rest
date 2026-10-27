@@ -7,6 +7,7 @@ use Kb24Rest\Bitrix24\OAuthClient;
 use Kb24Rest\Bitrix24\RestClient;
 use Kb24Rest\Http\App;
 use Kb24Rest\Portal\UserResolver;
+use Kb24Rest\Structure\StructureService;
 use PHPUnit\Framework\TestCase;
 
 final class AppTest extends TestCase
@@ -16,7 +17,7 @@ final class AppTest extends TestCase
         $oauth = new OAuthClient($http, 'id', 'secret');
         $rest = new RestClient($http, $oauth, $store);
 
-        return new App($store, $oauth, $rest, new UserResolver($store, $rest), dirname(__DIR__) . '/templates');
+        return new App($store, $oauth, $rest, new UserResolver($store, $rest), new StructureService($rest), dirname(__DIR__) . '/templates');
     }
 
     private function request(App $app, string $path, array $post = [], array $server = []): string
