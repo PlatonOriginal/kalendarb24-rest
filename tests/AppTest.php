@@ -7,6 +7,7 @@ use Kb24Rest\Bitrix24\OAuthClient;
 use Kb24Rest\Bitrix24\RestClient;
 use Kb24Rest\Http\App;
 use Kb24Rest\Portal\UserResolver;
+use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Structure\StructureService;
 use PHPUnit\Framework\TestCase;
 
@@ -17,7 +18,7 @@ final class AppTest extends TestCase
         $oauth = new OAuthClient($http, 'id', 'secret');
         $rest = new RestClient($http, $oauth, $store);
 
-        return new App($store, $oauth, $rest, new UserResolver($store, $rest), new StructureService($rest), dirname(__DIR__) . '/templates');
+        return new App($store, $oauth, $rest, new UserResolver($store, $rest), new StructureService($rest), new EntityStorage($rest), dirname(__DIR__) . '/templates');
     }
 
     private function request(App $app, string $path, array $post = [], array $server = []): string
@@ -34,7 +35,7 @@ final class AppTest extends TestCase
             'access_token' => 'a', 'refresh_token' => 'r', 'expires' => time() + 3600,
             'member_id' => 'real-member', 'domain' => 'oauth.bitrix.info',
             'client_endpoint' => 'https://real.bitrix24.ru/rest/', 'user_id' => 1,
-        ]]);
+        ], ...EntityStorageTest::emptyPortalResponses()]);
         $store = new MemoryPortalStore();
 
         $html = $this->request($this->app($http, $store), '/install', ['REFRESH_ID' => 'rid', 'member_id' => 'forged']);
@@ -44,6 +45,32 @@ final class AppTest extends TestCase
         self::assertArrayNotHasKey('forged', $store->portals);
         self::assertSame(1, $store->portals['real-member']->installedBy);
         self::assertSame('real.bitrix24.ru', $store->portals['real-member']->domain);
+        self::assertSame('https://real.bitrix24.ru/rest/entity.add.json', $http->requests[2]['url']);
+    }
+
+    public function testInstallIsNotFinishedWithoutEntityScope(): void
+    {
+        $http = new FakeTransport([[
+            'access_token' => 'a', 'refresh_token' => 'r', 'expires' => time() + 3600,
+            'member_id' => 'm1', 'client_endpoint' => 'https://real.bitrix24.ru/rest/', 'user_id' => 1,
+        ], ['error' => 'insufficient_scope', 'error_description' => 'The request requires higher privileges than provided by the access token']]);
+
+        $html = $this->request($this->app($http, new MemoryPortalStore()), '/install', ['REFRESH_ID' => 'rid']);
+
+        self::assertStringNotContainsString('BX24.installFinish', $html);
+        self::assertStringContainsString('entity', $html);
+    }
+
+    public function testStorageInfoIsForAdminsOnly(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
+        $http = new FakeTransport([['result' => ['ID' => '7']], ['result' => false]]);
+
+        $json = $this->request($this->app($http, $store), '/api/storage', [], ['HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok']);
+
+        self::assertSame('forbidden', json_decode($json, true)['error']);
+        self::assertCount(2, $http->requests);
     }
 
     public function testApiMeReturnsOnlyIds(): void
@@ -80,5 +107,31 @@ final class AppTest extends TestCase
         self::assertTrue($nodes[0]['headsMatch']);
         self::assertSame([], $nodes[1]['heads']);
         self::assertTrue($nodes[1]['headsMatch']);
+    }
+
+    public function testStorageProbeWritesUpdatesReadsAndDeletes(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
+        $http = new FakeTransport([
+            ['result' => ['ID' => '7']],
+            ['result' => false],
+            ['result' => 55],
+            ['result' => true],
+            ['result' => [['ID' => '55', 'CREATED_BY' => '1', 'PROPERTY_VALUES' => ['KIND' => 'probe', 'STATUS' => 'probe_updated', 'USER_ID' => '7']]]],
+            ['result' => true],
+            ['result' => []],
+        ]);
+
+        $json = $this->request($this->app($http, $store), '/api/storage/probe', [], [
+            'HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok', 'REQUEST_METHOD' => 'POST',
+        ]);
+
+        $data = json_decode($json, true);
+        self::assertSame(55, $data['itemId']);
+        self::assertTrue($data['updateKeepsOtherProperties']);
+        self::assertTrue($data['deleted']);
+        self::assertSame(7, $http->requests[2]['params']['PROPERTY_VALUES']['USER_ID']);
+        self::assertSame('a', $http->requests[2]['params']['auth']);
     }
 }

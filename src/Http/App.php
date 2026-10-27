@@ -10,6 +10,8 @@ use Kb24Rest\Portal\CurrentUser;
 use Kb24Rest\Portal\Portal;
 use Kb24Rest\Portal\PortalStore;
 use Kb24Rest\Portal\UserResolver;
+use Kb24Rest\Storage\EntityStorage;
+use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 
 /**
@@ -21,6 +23,9 @@ use Kb24Rest\Structure\StructureService;
  * Блок 2:
  *   /api/structure  отделы, руководители и цепочка руководителей текущего сотрудника
  *   /api/hr-compare руководители по новой структуре (humanresources) для сравнения с department.get
+ * Блок 3:
+ *   /api/storage        (администратор) создаёт недостающие хранилища entity.*, показывает их свойства и права
+ *   /api/storage/probe  (POST) сервер пишет, меняет, читает и удаляет пробную запись
  */
 final class App
 {
@@ -30,6 +35,7 @@ final class App
         private readonly RestClient $rest,
         private readonly UserResolver $users,
         private readonly StructureService $structure,
+        private readonly EntityStorage $storage,
         private readonly string $templates,
     ) {
     }
@@ -45,12 +51,19 @@ final class App
                 $path === '/api/check' => $this->json($this->check($this->currentUser($server))),
                 $path === '/api/structure' => $this->json($this->structure($this->currentUser($server))),
                 $path === '/api/hr-compare' => $this->json($this->hrCompare($this->currentUser($server))),
+                $path === '/api/storage' => $this->json($this->storageInfo($this->currentAdmin($server))),
+                $path === '/api/storage/probe' && ($server['REQUEST_METHOD'] ?? '') === 'POST'
+                    => $this->json($this->storageProbe($this->currentUser($server))),
                 default => $this->notFound(),
             };
         }
         catch (RestException $e)
         {
             $this->json(['error' => $e->errorCode, 'message' => $e->getMessage()], 400);
+        }
+        catch (AccessDenied $e)
+        {
+            $this->json(['error' => 'forbidden', 'message' => $e->getMessage()], 403);
         }
     }
 
@@ -66,7 +79,20 @@ final class App
         // member_id и домен берём из ответа oauth.bitrix.info, а не из POST
         $tokens = $this->oauth->refresh($refreshToken);
         $existing = $this->portals->findByMemberId($tokens->memberId);
-        $this->portals->save(Portal::fromInstall($tokens, $existing?->id));
+        $portal = Portal::fromInstall($tokens, $existing?->id);
+        $this->portals->save($portal);
+
+        try
+        {
+            $this->storage->ensure($portal);
+        }
+        catch (RestException $e)
+        {
+            // Без хранилищ приложению работать не с чем, поэтому установку не завершаем
+            $this->render('install.php', ['error' => 'Не удалось создать хранилища данных: ' . $e->errorCode . ' ' . $e->getMessage()
+                . '. Проверьте, что у приложения есть право «Хранилище данных (entity)».']);
+            return;
+        }
 
         $this->render('install.php', ['error' => null]);
     }
@@ -139,6 +165,63 @@ final class App
         }
 
         return ['nodes' => $nodes];
+    }
+
+    private function storageInfo(CurrentUser $user): array
+    {
+        $ensure = $this->storage->ensure($user->portal);
+        $storages = [];
+        foreach (Schema::storages() as $entity => $storage)
+        {
+            $storages[] = [
+                'entity' => $entity,
+                'properties' => array_keys($storage['properties']),
+                'rights' => $this->storage->rights($user->portal, $entity),
+            ];
+        }
+
+        return $ensure + ['installedBy' => $user->portal->installedBy, 'storages' => $storages];
+    }
+
+    /**
+     * Пробная запись: проверяем запись, частичное обновление, чтение и удаление на живом портале.
+     * Заодно выясняем, заменяет ли entity.item.update все свойства или только переданные (в документации не сказано).
+     */
+    private function storageProbe(CurrentUser $user): array
+    {
+        $portal = $user->portal;
+        $started = microtime(true);
+        $id = $this->storage->add($portal, Schema::REQUESTS, 'probe', [
+            'USER_ID' => $user->userId,
+            'KIND' => 'probe',
+            'STATUS' => 'probe',
+            'DAYS' => 1,
+        ]);
+        $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => 'probe_updated']);
+        $found = $this->storage->find($portal, Schema::REQUESTS, ['ID' => $id]);
+        $values = $found[0]['PROPERTY_VALUES'] ?? [];
+        $this->storage->delete($portal, Schema::REQUESTS, $id);
+        $afterDelete = $this->storage->find($portal, Schema::REQUESTS, ['ID' => $id]);
+
+        return [
+            'itemId' => $id,
+            'createdBy' => isset($found[0]['CREATED_BY']) ? (int)$found[0]['CREATED_BY'] : null,
+            'valuesAfterUpdate' => $values,
+            'updateKeepsOtherProperties' => ($values['KIND'] ?? null) === 'probe',
+            'deleted' => $afterDelete === [],
+            'milliseconds' => (int)round((microtime(true) - $started) * 1000),
+        ];
+    }
+
+    private function currentAdmin(array $server): CurrentUser
+    {
+        $user = $this->currentUser($server);
+        if (!$user->isAdmin)
+        {
+            throw new AccessDenied('Доступно только администратору портала');
+        }
+
+        return $user;
     }
 
     private function currentUser(array $server): CurrentUser
