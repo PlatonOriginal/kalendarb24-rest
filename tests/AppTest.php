@@ -57,4 +57,28 @@ final class AppTest extends TestCase
         self::assertSame(['userId' => 7, 'isAdmin' => true, 'domain' => 'test.bitrix24.ru', 'installedBy' => 1], json_decode($json, true));
         self::assertStringNotContainsString('Иван', $json);
     }
+
+    public function testHrCompareTreatsMissingHeadOnBothSidesAsMatch(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
+        $http = new FakeTransport([
+            ['result' => ['ID' => '1']],
+            ['result' => true],
+            ['result' => [['ID' => '1', 'NAME' => 'Компания', 'UF_HEAD' => '1'], ['ID' => '5', 'NAME' => 'Продажи', 'PARENT' => '1']]],
+            ['result' => ['items' => [
+                ['id' => 1, 'name' => 'Компания', 'parentId' => null, 'accessCode' => 'D1'],
+                ['id' => 2, 'name' => 'Продажи', 'parentId' => 1, 'accessCode' => 'D5'],
+            ]]],
+            ['result' => ['item' => ['id' => 1, 'members' => [['userId' => 1, 'role' => 'MEMBER_HEAD']]]]],
+            ['result' => ['item' => ['id' => 2, 'members' => [['userId' => 9, 'role' => 'MEMBER_EMPLOYEE']]]]],
+        ]);
+
+        $json = $this->request($this->app($http, $store), '/api/hr-compare', [], ['HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok']);
+
+        $nodes = json_decode($json, true)['nodes'];
+        self::assertTrue($nodes[0]['headsMatch']);
+        self::assertSame([], $nodes[1]['heads']);
+        self::assertTrue($nodes[1]['headsMatch']);
+    }
 }

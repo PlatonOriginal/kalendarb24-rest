@@ -132,7 +132,10 @@ final class App
             $department = $departmentId !== null ? $chart->department($departmentId) : null;
             $node['departmentGetId'] = $department?->id;
             $node['departmentGetHead'] = $department?->headUserId;
-            $node['headsMatch'] = $department !== null && in_array($department->headUserId, $node['heads'], true);
+            // Руководитель не назначен ни там, ни там: это тоже совпадение
+            $node['headsMatch'] = $department !== null && ($department->headUserId === null
+                ? $node['heads'] === []
+                : in_array($department->headUserId, $node['heads'], true));
         }
 
         return ['nodes' => $nodes];
