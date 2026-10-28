@@ -7,7 +7,13 @@ final class RestException extends \RuntimeException
 {
     public function __construct(public readonly string $errorCode, string $description = '')
     {
-        parent::__construct($description !== '' ? "$errorCode: $description" : $errorCode);
+        // Некоторые методы (например, calendar.event.add) отдают пустой код ошибки и только описание
+        parent::__construct(match (true)
+        {
+            $errorCode === '' => $description,
+            $description === '' => $errorCode,
+            default => "$errorCode: $description",
+        });
     }
 
     /**

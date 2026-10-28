@@ -142,7 +142,7 @@ final class App
                     (string)($post['dateTo'] ?? ''),
                 )),
                 (bool)preg_match('~^/api/requests/(\d+)$~', $path, $m) => $this->json($this->requests->card($this->currentUser($server), (int)$m[1])),
-                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse)$~', $path, $m) && $this->isPost($server)
+                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse|calendar-retry)$~', $path, $m) && $this->isPost($server)
                     => $this->json($this->decide($this->currentUser($server), (int)$m[1], $m[2], $post)),
                 $path === '/api/settings/roles' && $this->isPost($server) => $this->json($this->saveRoles($this->currentAdmin($server), $post)),
                 $path === '/api/settings/options' && $this->isPost($server) => $this->json($this->saveOptions($this->currentAdmin($server), $post)),
@@ -340,6 +340,7 @@ final class App
             'cancel' => $this->requests->startCancellation($user, $id, (string)($post['reason'] ?? '')),
             'cancel-approve' => $this->requests->approveCancellation($user, $id),
             'cancel-refuse' => $this->requests->refuseCancellation($user, $id, (string)($post['reason'] ?? '')),
+            'calendar-retry' => $this->requests->retryCalendar($user, $id),
         };
     }
 

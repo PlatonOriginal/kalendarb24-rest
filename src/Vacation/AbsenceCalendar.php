@@ -83,11 +83,43 @@ final class AbsenceCalendar implements AfterResponse
         }
     }
 
+    /**
+     * Календарь сотрудника, куда приложение может добавить событие. Без явной секции портал на портале
+     * ответил «Доступ запрещен», поэтому ищем секцию автора с правом add (calendar.section.get возвращает PERM
+     * для того, кто вызывает), а если такой нет, создаём ему календарь «Отпуска»: по документации
+     * calendar.section.add администратор может создавать календари другим пользователям.
+     * https://apidocs.bitrix24.com/api-reference/calendar/calendar-section-get.html
+     * https://apidocs.bitrix24.com/api-reference/calendar/calendar-section-add.html
+     */
+    private function sectionFor(Portal $portal, int $userId): int
+    {
+        foreach ((array)$this->rest->call($portal, 'calendar.section.get', ['type' => 'user', 'ownerId' => $userId]) as $section)
+        {
+            if ((int)($section['OWNER_ID'] ?? 0) === $userId && !empty($section['PERM']['add']))
+            {
+                return (int)$section['ID'];
+            }
+        }
+
+        return (int)$this->rest->call($portal, 'calendar.section.add', [
+            'type' => 'user',
+            'ownerId' => $userId,
+            'name' => 'Отпуска',
+        ]);
+    }
+
     private function create(Portal $portal, array $request): array
     {
         try
         {
+            $section = $this->sectionFor($portal, $request['userId']);
+            if ($section <= 0)
+            {
+                return ['CAL_ERROR' => 'не найден календарь сотрудника, куда приложение может добавить событие'];
+            }
             $eventId = (int)$this->rest->call($portal, 'calendar.event.add', [
+                'section' => $section,
+                'auto_detect_section' => 'N',
                 'type' => 'user',
                 'ownerId' => $request['userId'],
                 'name' => Kinds::all()[$request['kind']]['name'] ?? $request['kind'],

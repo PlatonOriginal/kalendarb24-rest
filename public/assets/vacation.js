@@ -215,6 +215,7 @@
             + (data.can.approve ? '<button type="button" class="primary" data-action="approve">Согласовать</button>' : '')
             + (data.can.reject ? '<select id="reject-reason">' + reasonOptions + '</select><button type="button" class="danger" data-action="reject">Отклонить</button>' : '')
             + (data.can.withdraw ? '<button type="button" data-action="withdraw">Отозвать</button>' : '')
+            + (data.can.retryCalendar ? '<button type="button" data-action="calendar-retry">Добавить событие ещё раз</button>' : '')
             + (data.can.cancel ? '<input type="text" id="cancel-reason" placeholder="Причина отмены" size="30"><button type="button" class="danger" data-action="cancel">Отменить отсутствие</button>' : '')
             + (data.can.decideCancel ? '<button type="button" class="primary" data-action="cancel-approve">Согласовать отмену</button>'
                 + '<input type="text" id="refuse-reason" placeholder="Причина отказа" size="30"><button type="button" class="danger" data-action="cancel-refuse">Отказать в отмене</button>' : '')
@@ -242,7 +243,8 @@
                         withdraw: 'Заявка отозвана',
                         cancel: 'Отмена отправлена на согласование',
                         'cancel-approve': 'Отмена согласована',
-                        'cancel-refuse': 'В отмене отказано'
+                        'cancel-refuse': 'В отмене отказано',
+                        'calendar-retry': 'Событие добавляется, обновите карточку через несколько секунд'
                     }[action]);
                 }).catch(function (error) {
                     button.disabled = false;

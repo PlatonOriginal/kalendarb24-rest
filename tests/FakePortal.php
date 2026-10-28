@@ -26,6 +26,9 @@ final class FakePortal implements HttpTransport
     /** @var list<int> удалённые события календаря */
     public array $deletedEvents = [];
 
+    /** @var array<int, list<array<string, mixed>>> календари сотрудников (calendar.section.get) по ID владельца */
+    public array $sections = [];
+
     /** @var array<string, mixed> app.option */
     public array $options = [];
 
@@ -81,6 +84,8 @@ final class FakePortal implements HttpTransport
             ], (array)$params['filter']['ID'])],
             'batch' => ['result' => $this->batch((array)$params['cmd'])],
             'calendar.event.add' => $this->calendarError ?? ['result' => 1000 + array_push($this->events, $params)],
+            'calendar.section.get' => ['result' => $this->sections[(int)$params['ownerId']] ?? []],
+            'calendar.section.add' => ['result' => $this->addSection((int)$params['ownerId'], (string)$params['name'])],
             'calendar.event.delete' => ['result' => (bool)array_push($this->deletedEvents, (int)$params['id'])],
             'app.option.get' => ['result' => $this->options],
             'app.option.set' => ['result' => (bool)($this->options = (array)$params['options'] + $this->options)],
@@ -97,6 +102,14 @@ final class FakePortal implements HttpTransport
             'entity.item.get' => ['result' => $this->find($entity, (array)($params['FILTER'] ?? []), (array)($params['SORT'] ?? []))],
             default => throw new \LogicException("Неожиданный метод $method"),
         };
+    }
+
+    private function addSection(int $ownerId, string $name): int
+    {
+        $id = 500 + count($this->sections, COUNT_RECURSIVE);
+        $this->sections[$ownerId][] = ['ID' => (string)$id, 'NAME' => $name, 'OWNER_ID' => (string)$ownerId, 'PERM' => ['add' => true]];
+
+        return $id;
     }
 
     private function batch(array $commands): array
