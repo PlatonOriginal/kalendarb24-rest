@@ -179,12 +179,50 @@
         });
     }
 
+    // Где на самом деле оказалось событие заявки: чей календарь, кто организатор и участники
+    function block5() {
+        document.getElementById('block5-run').onclick = function () {
+            var id = document.getElementById('block5-id').value;
+            api('/api/requests/' + id).then(function (card) {
+                var request = card.request;
+                if (!request.calEventId) {
+                    row('block5', 'Заявка ' + id + ': событие', false, request.calError || 'у заявки нет события');
+                    return;
+                }
+                call('calendar.event.getbyid', { id: request.calEventId }).then(function (event) {
+                    if (event.error) {
+                        row('block5', 'calendar.event.getbyid ' + request.calEventId, false, event.error);
+                        return;
+                    }
+                    var e = event.data || {};
+                    var keys = ['ID', 'PARENT_ID', 'CAL_TYPE', 'OWNER_ID', 'SECTION_ID', 'SECT_ID', 'CREATED_BY', 'MEETING_HOST',
+                        'IS_MEETING', 'ACCESSIBILITY', 'ATTENDEES_CODES', 'MEETING_STATUS', 'DATE_FROM', 'DATE_TO'];
+                    var picked = { 'автор заявки': request.userId };
+                    keys.forEach(function (k) { if (k in e) { picked[k] = e[k]; } });
+                    if (Array.isArray(e.ATTENDEE_LIST)) {
+                        picked.ATTENDEE_LIST = e.ATTENDEE_LIST.map(function (a) { return a.id + ' ' + a.status; });
+                    }
+                    row('block5', 'calendar.event.getbyid ' + request.calEventId, String(e.OWNER_ID) === String(request.userId), picked);
+                    call('calendar.section.get', { type: 'user', ownerId: request.userId }).then(function (sections) {
+                        row('block5', 'calendar.section.get: календари автора заявки', !sections.error,
+                            sections.error || (sections.data || []).map(function (sec) {
+                                return sec.ID + ' «' + sec.NAME + '» владелец ' + sec.OWNER_ID + ' PERM.add=' + !!(sec.PERM && sec.PERM.add);
+                            }).join('\n'));
+                    });
+                });
+            }).catch(function (error) {
+                row('block5', 'Заявка ' + id, false, error);
+            });
+        };
+    }
+
     // Проверки запускает вкладка «Проверки» (vacation.js), уже после BX24.init
     window.Kb24Checks = {
         run: function () {
             block1();
             block2();
             block3();
+            block5();
         }
     };
 })();
