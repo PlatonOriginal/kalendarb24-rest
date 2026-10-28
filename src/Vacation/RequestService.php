@@ -15,7 +15,7 @@ use Kb24Rest\Structure\StructureService;
 /**
  * Заявки и согласование по маршруту по умолчанию, как в коробке: руководитель → ОК → директор.
  * Все проверки здесь, на сервере: сотрудник не может изменить заявку в обход, данные в портале пишет только сервер.
- * Пока нет: настраиваемых маршрутов, заместителей, лимитов отделов, остатков и уведомлений (следующие блоки).
+ * Пока нет: настраиваемых маршрутов, заместителей, лимитов отделов и остатков (следующие блоки).
  */
 final class RequestService
 {
@@ -26,6 +26,7 @@ final class RequestService
         private readonly WorkCalendar $calendar,
         private readonly \DateTimeImmutable $today = new \DateTimeImmutable('today'),
         private readonly bool $allowSelfApproval = false,
+        private readonly ?Notifier $notifier = null,
     ) {
     }
 
@@ -74,8 +75,10 @@ final class RequestService
             'APPROVER_ID' => $approverId,
         ]);
         $this->log($portal, $id, $user->userId, 'create', null, $status);
+        $request = $this->load($portal, $id);
+        $this->notifier?->add($portal, 'review', $request, [$approverId], $user->userId);
 
-        return $this->load($portal, $id);
+        return $request;
     }
 
     public function approve(CurrentUser $user, int $id): array
@@ -88,8 +91,18 @@ final class RequestService
 
         $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => $next, 'APPROVER_ID' => $approverId]);
         $this->log($portal, $id, $user->userId, 'approve', $request['status'], $next);
+        $request = $this->load($portal, $id);
+        if ($next === Status::APPROVED)
+        {
+            $this->notifier?->add($portal, 'approved', $request, [$request['userId']], $user->userId);
+        }
+        else
+        {
+            $this->notifier?->add($portal, 'review', $request, [$approverId], $user->userId);
+            $this->notifier?->add($portal, 'step', $request, [$request['userId']], $user->userId);
+        }
 
-        return $this->load($portal, $id);
+        return $request;
     }
 
     public function reject(CurrentUser $user, int $id, string $reason): array
@@ -103,8 +116,11 @@ final class RequestService
 
         $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::REJECTED, 'APPROVER_ID' => 0]);
         $this->log($portal, $id, $user->userId, 'reject', $request['status'], Status::REJECTED, $reason);
+        $approvedBy = $this->approvedBy($portal, $id);
+        $request = $this->load($portal, $id);
+        $this->notifier?->add($portal, 'rejected', $request, [$request['userId'], ...$approvedBy], $user->userId, $reason);
 
-        return $this->load($portal, $id);
+        return $request;
     }
 
     public function withdraw(CurrentUser $user, int $id): array
@@ -122,8 +138,12 @@ final class RequestService
 
         $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::WITHDRAWN, 'APPROVER_ID' => 0]);
         $this->log($portal, $id, $user->userId, 'withdraw', $request['status'], Status::WITHDRAWN);
+        $approvedBy = $this->approvedBy($portal, $id);
+        $notify = [$request['approverId'], ...$approvedBy];
+        $request = $this->load($portal, $id);
+        $this->notifier?->add($portal, 'withdrawn', $request, $notify, $user->userId);
 
-        return $this->load($portal, $id);
+        return $request;
     }
 
     /**
@@ -304,6 +324,25 @@ final class RequestService
                 'createdAt' => (string)($item['DATE_CREATE'] ?? ''),
             ];
         }, $this->storage->find($portal, Schema::HISTORY, ['PROPERTY_REQ_ID' => $requestId]));
+    }
+
+    /**
+     * Кто уже согласовал заявку: им сообщаем, если её потом отклонили или отозвали.
+     *
+     * @return list<int>
+     */
+    private function approvedBy(Portal $portal, int $requestId): array
+    {
+        $ids = [];
+        foreach ($this->history($portal, $requestId) as $entry)
+        {
+            if ($entry['action'] === 'approve')
+            {
+                $ids[] = $entry['actorId'];
+            }
+        }
+
+        return $ids;
     }
 
     private function log(Portal $portal, int $requestId, int $actorId, string $action, ?string $from, string $to, string $reason = ''): void

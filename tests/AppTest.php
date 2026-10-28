@@ -16,7 +16,7 @@ use PHPUnit\Framework\TestCase;
 
 final class AppTest extends TestCase
 {
-    private function app(FakeTransport $http, MemoryPortalStore $store): App
+    private function app(FakeTransport $http, MemoryPortalStore $store, string $appUrl = ''): App
     {
         $oauth = new OAuthClient($http, 'id', 'secret');
         $rest = new RestClient($http, $oauth, $store);
@@ -26,7 +26,7 @@ final class AppTest extends TestCase
         $roles = new RoleService($storage);
 
         return new App($store, $oauth, $rest, new UserResolver($store, $rest), $structure, $storage, $roles,
-            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates');
+            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates', null, $appUrl);
     }
 
     private function request(App $app, string $path, array $post = [], array $server = []): string
@@ -151,7 +151,7 @@ final class AppTest extends TestCase
     {
         $store = new MemoryPortalStore();
         $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
-        $store->setStorageVersion('m1', \Kb24Rest\Storage\Schema::version());
+        $store->setStorageVersion('m1', App::setupVersion(''));
         $http = new FakeTransport([[
             'access_token' => 'new', 'refresh_token' => 'new-r', 'expires' => time() + 3600,
             'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 1,
@@ -190,7 +190,31 @@ final class AppTest extends TestCase
 
         $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid']);
 
-        self::assertSame(\Kb24Rest\Storage\Schema::version(), $store->storageVersion('m1'));
+        self::assertSame(App::setupVersion(''), $store->storageVersion('m1'));
         self::assertSame('https://test.bitrix24.ru/rest/entity.add.json', $http->requests[2]['url']);
+    }
+
+    public function testNewTunnelAddressRebindsNotificationLinkHandler(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
+        $store->setStorageVersion('m1', App::setupVersion('https://old.example.com'));
+        $http = new FakeTransport([[
+            'access_token' => 'new', 'refresh_token' => 'new-r', 'expires' => time() + 3600,
+            'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 1,
+        ], ...EntityStorageTest::emptyPortalResponses(), ...[
+            ['result' => [['id' => 3, 'placement' => 'REST_APP_URI', 'handler' => 'https://old.example.com/app']]],
+            ['result' => ['count' => 1]],
+            ['result' => true],
+        ]]);
+
+        $this->request($this->app($http, $store, 'https://new.example.com'), '/app', ['REFRESH_ID' => 'rid']);
+
+        $calls = array_slice($http->requests, -3);
+        self::assertSame('https://test.bitrix24.ru/rest/placement.unbind.json', $calls[1]['url']);
+        self::assertSame('https://old.example.com/app', $calls[1]['params']['HANDLER']);
+        self::assertSame('https://test.bitrix24.ru/rest/placement.bind.json', $calls[2]['url']);
+        self::assertSame(['REST_APP_URI', 'https://new.example.com/app'], [$calls[2]['params']['PLACEMENT'], $calls[2]['params']['HANDLER']]);
+        self::assertSame(App::setupVersion('https://new.example.com'), $store->storageVersion('m1'));
     }
 }

@@ -17,6 +17,12 @@ final class FakePortal implements HttpTransport
     /** @var list<string> вызванные методы */
     public array $calls = [];
 
+    /** @var list<array<string, mixed>> параметры уведомлений, пришедших в batch */
+    public array $notifications = [];
+
+    /** @var list<array<string, mixed>> обработчики встроек (placement.*) */
+    public array $placements = [];
+
     private int $nextId = 1;
 
     /**
@@ -55,7 +61,19 @@ final class FakePortal implements HttpTransport
         return match ($method)
         {
             'department.get' => ['result' => $this->departments],
-            'user.get' => ['result' => [['ID' => (string)$params['filter']['ID'], 'UF_DEPARTMENT' => $this->userDepartments[(int)$params['filter']['ID']] ?? []]]],
+            'user.get' => ['result' => array_map(fn($id) => [
+                'ID' => (string)$id,
+                'NAME' => 'Имя' . $id,
+                'LAST_NAME' => 'Фамилия' . $id,
+                'UF_DEPARTMENT' => $this->userDepartments[(int)$id] ?? [],
+            ], (array)$params['filter']['ID'])],
+            'batch' => ['result' => $this->batch((array)$params['cmd'])],
+            'placement.get' => ['result' => $this->placements],
+            'placement.bind' => ['result' => (bool)($this->placements[] = ['placement' => $params['PLACEMENT'], 'handler' => $params['HANDLER']])],
+            'placement.unbind' => ['result' => ['count' => count($this->placements) - count($this->placements = array_values(array_filter(
+                $this->placements,
+                static fn(array $p) => !($p['placement'] === $params['PLACEMENT'] && $p['handler'] === $params['HANDLER']),
+            )))]],
             'calendar.settings.get' => ['result' => $this->calendarSettings],
             'entity.item.add' => ['result' => $this->add($entity, $params)],
             'entity.item.update' => ['result' => $this->update($entity, (int)$params['ID'], (array)($params['PROPERTY_VALUES'] ?? []))],
@@ -63,6 +81,24 @@ final class FakePortal implements HttpTransport
             'entity.item.get' => ['result' => $this->find($entity, (array)($params['FILTER'] ?? []), (array)($params['SORT'] ?? []))],
             default => throw new \LogicException("Неожиданный метод $method"),
         };
+    }
+
+    private function batch(array $commands): array
+    {
+        $result = [];
+        foreach ($commands as $key => $command)
+        {
+            [$method, $query] = explode('?', $command, 2) + [1 => ''];
+            if ($method !== 'im.notify.system.add')
+            {
+                throw new \LogicException("В batch неожиданный метод $method");
+            }
+            parse_str($query, $params);
+            $this->notifications[] = $params;
+            $result[$key] = count($this->notifications);
+        }
+
+        return ['result' => $result, 'result_error' => []];
     }
 
     private function add(string $entity, array $params): int

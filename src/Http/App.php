@@ -14,6 +14,7 @@ use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 use Kb24Rest\Vacation\Kinds;
+use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RejectReasons;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
@@ -39,6 +40,9 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/requests/<id>         карточка заявки с историей и доступными действиями
  *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
  *   /api/settings/roles        (POST, администратор) директор и сотрудники ОК
+ * Блок 4:
+ *   уведомления о заявках уходят после ответа браузеру; ссылка из уведомления открывает /app
+ *   через встройку REST_APP_URI с PLACEMENT_OPTIONS {"req": "<ID>"}
  */
 final class App
 {
@@ -52,10 +56,50 @@ final class App
         private readonly RoleService $roles,
         private readonly RequestService $requests,
         private readonly string $templates,
+        private readonly ?Notifier $notifier = null,
+        private readonly string $appUrl = '',
     ) {
     }
 
     public function handle(string $path, array $post, array $server): void
+    {
+        ob_start();
+        try
+        {
+            $this->route($path, $post, $server);
+        }
+        finally
+        {
+            $this->finishResponse();
+        }
+        $this->notifier?->send();
+    }
+
+    /**
+     * Отдать ответ браузеру до отправки уведомлений, чтобы согласование не ждало лишние вызовы REST.
+     */
+    private function finishResponse(): void
+    {
+        if ($this->notifier === null || $this->notifier->pending() === [])
+        {
+            ob_end_flush();
+            return;
+        }
+        if (!headers_sent())
+        {
+            header('Content-Length: ' . ob_get_length());
+            header('Connection: close');
+        }
+        ignore_user_abort(true);
+        ob_end_flush();
+        flush();
+        if (function_exists('fastcgi_finish_request'))
+        {
+            fastcgi_finish_request();
+        }
+    }
+
+    private function route(string $path, array $post, array $server): void
     {
         try
         {
@@ -264,10 +308,55 @@ final class App
 
     private function ensureStorage(Portal $portal, bool $force = false): void
     {
-        if ($force || $this->portals->storageVersion($portal->memberId) !== Schema::version())
+        if ($force || $this->portals->storageVersion($portal->memberId) !== self::setupVersion($this->appUrl))
         {
             $this->storage->ensure($portal);
-            $this->portals->setStorageVersion($portal->memberId, Schema::version());
+            $this->bindAppUri($portal);
+            $this->portals->setStorageVersion($portal->memberId, self::setupVersion($this->appUrl));
+        }
+    }
+
+    /**
+     * Версия того, что сервер настраивает в портале: хранилища и обработчик ссылок REST_APP_URI.
+     * Адрес туннеля входит в версию: после его смены обработчик перерегистрируется при следующем открытии.
+     */
+    public static function setupVersion(string $appUrl): string
+    {
+        return substr(sha1(Schema::version() . '|' . $appUrl . '|REST_APP_URI'), 0, 12);
+    }
+
+    /**
+     * Обработчик ссылок вида /marketplace/view/<код>/?params[req]=ID из уведомлений.
+     * У приложения он может быть только один, поэтому старый адрес сначала снимаем.
+     * https://apidocs.bitrix24.com/api-reference/widgets/universal/app-url.html
+     */
+    private function bindAppUri(Portal $portal): void
+    {
+        if ($this->appUrl === '')
+        {
+            return;
+        }
+        $handler = $this->appUrl . '/app';
+        try
+        {
+            foreach ((array)$this->rest->call($portal, 'placement.get') as $bound)
+            {
+                if (($bound['placement'] ?? '') !== 'REST_APP_URI')
+                {
+                    continue;
+                }
+                if (($bound['handler'] ?? '') === $handler)
+                {
+                    return;
+                }
+                $this->rest->call($portal, 'placement.unbind', ['PLACEMENT' => 'REST_APP_URI', 'HANDLER' => $bound['handler']]);
+            }
+            $this->rest->call($portal, 'placement.bind', ['PLACEMENT' => 'REST_APP_URI', 'HANDLER' => $handler, 'TITLE' => 'Отпуска']);
+        }
+        catch (RestException $e)
+        {
+            // Без обработчика приложение работает, только ссылки из уведомлений не откроют карточку
+            error_log('kb24 placement: ' . $e->errorCode . ' ' . $e->getMessage());
         }
     }
 
@@ -279,7 +368,6 @@ final class App
     private function storageInfo(CurrentUser $user): array
     {
         $ensure = $this->storage->ensure($user->portal);
-        $this->portals->setStorageVersion($user->portal->memberId, Schema::version());
         $storages = [];
         foreach (Schema::storages() as $entity => $storage)
         {

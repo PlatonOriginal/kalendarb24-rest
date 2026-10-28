@@ -13,6 +13,7 @@ final class Config
         public readonly string $dbUser,
         public readonly string $dbPassword,
         public readonly bool $allowSelfApproval,
+        public readonly string $appCode,
     ) {
     }
 
@@ -29,6 +30,8 @@ final class Config
             $get('DB_PASSWORD'),
             // На время проверки на одном аккаунте. Перед публикацией в Маркете выключить: ALLOW_SELF_APPROVAL=0
             $get('ALLOW_SELF_APPROVAL', '1') === '1',
+            // Код приложения в ссылке /marketplace/view/<код>/: у локального приложения это client_id
+            $get('APP_CODE', $get('B24_CLIENT_ID')),
         );
     }
 }
