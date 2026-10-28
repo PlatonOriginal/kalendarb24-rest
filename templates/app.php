@@ -78,6 +78,15 @@
         <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
         <tbody></tbody>
     </table>
+    <h2>Блок 5: где оказалось событие в календаре</h2>
+    <div class="form">
+        <label>Заявка № <input type="number" id="block5-id" min="1"></label>
+        <button type="button" id="block5-run">Проверить</button>
+    </div>
+    <table id="block5">
+        <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
+        <tbody></tbody>
+    </table>
 </section>
 
 <script src="/assets/checks.js"></script>
