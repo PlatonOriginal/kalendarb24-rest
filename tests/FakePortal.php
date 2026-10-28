@@ -89,13 +89,14 @@ final class FakePortal implements HttpTransport
         foreach ($commands as $key => $command)
         {
             [$method, $query] = explode('?', $command, 2) + [1 => ''];
-            if ($method !== 'im.notify.system.add')
-            {
-                throw new \LogicException("В batch неожиданный метод $method");
-            }
             parse_str($query, $params);
-            $this->notifications[] = $params;
-            $result[$key] = count($this->notifications);
+            
+            $result[$key] = match ($method)
+            {
+                'im.notify.system.add' => array_push($this->notifications, $params),
+                'entity.item.get' => $this->find((string)$params['ENTITY'], (array)($params['FILTER'] ?? []), (array)($params['SORT'] ?? [])),
+                default => throw new \LogicException("В batch неожиданный метод $method"),
+            };
         }
 
         return ['result' => $result, 'result_error' => []];

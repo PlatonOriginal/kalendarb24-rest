@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Kb24Rest\Storage;
 
 use Kb24Rest\Bitrix24\RestClient;
+use Kb24Rest\Bitrix24\RestException;
 use Kb24Rest\Portal\Portal;
 
 /**
@@ -86,6 +87,36 @@ final class EntityStorage
     public function find(Portal $portal, string $entity, array $filter = [], array $sort = ['ID' => 'ASC']): array
     {
         return $this->rest->listAll($portal, 'entity.item.get', ['ENTITY' => $entity, 'SORT' => $sort, 'FILTER' => $filter]);
+    }
+
+    /**
+     * Несколько выборок одним вызовом batch. Только первая страница (50 записей) каждой выборки:
+     * для заявки по ID, её истории и ролей этого хватает.
+     *
+     * @param array<string, array{0: string, 1: array<string, mixed>}> $queries ключ => [хранилище, фильтр]
+     * @return array<string, list<array<string, mixed>>>
+     */
+    public function findMany(Portal $portal, array $queries): array
+    {
+        $commands = [];
+        foreach ($queries as $key => [$entity, $filter])
+        {
+            $commands[$key] = 'entity.item.get?' . http_build_query(['ENTITY' => $entity, 'SORT' => ['ID' => 'ASC'], 'FILTER' => $filter]);
+        }
+        $batch = (array)$this->rest->call($portal, 'batch', ['halt' => 1, 'cmd' => $commands]);
+        if (!empty($batch['result_error']))
+        {
+            $error = reset($batch['result_error']);
+            throw new RestException((string)($error['error'] ?? 'batch_error'), (string)($error['error_description'] ?? ''));
+        }
+
+        $found = [];
+        foreach (array_keys($queries) as $key)
+        {
+            $found[$key] = array_values((array)($batch['result'][$key] ?? []));
+        }
+
+        return $found;
     }
 
     /**

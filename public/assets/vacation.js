@@ -148,7 +148,11 @@
     }
 
     function openCard(id) {
-        api('/api/requests/' + id).then(function (data) {
+        showCard(api('/api/requests/' + id));
+    }
+
+    function showCard(request) {
+        request.then(function (data) {
             var r = data.request;
             var ids = [r.userId, r.approverId].concat(data.history.map(function (h) { return h.actorId; }));
             return loadNames(ids).then(function () {
@@ -286,17 +290,21 @@
         document.querySelectorAll('.tabs a').forEach(function (link) {
             link.addEventListener('click', function () { openTab(link.dataset.tab); });
         });
+        // Открыто по ссылке из уведомления (/marketplace/view/<код>/?params[req]=ID): карточку запрашиваем сразу,
+        // параллельно с данными о сотруднике, а список заявок не грузим, пока к нему не вернутся
+        var placement = BX24.placement.info();
+        var linked = placement.placement === 'REST_APP_URI' && placement.options && Number(placement.options.req);
+        var card = linked ? api('/api/requests/' + linked) : null;
         api('/api/vacation').then(function (me) {
             state.me = me;
             document.querySelector('[data-tab="settings"]').hidden = !me.isAdmin;
             bindForm();
-            openTab(location.hash.replace('#', '') || 'requests');
-            loadToApprove();
-            // Открыто по ссылке из уведомления: /marketplace/view/<код>/?params[req]=ID
-            var placement = BX24.placement.info();
-            if (placement.placement === 'REST_APP_URI' && placement.options && placement.options.req) {
-                openCard(Number(placement.options.req));
+            if (card) {
+                showCard(card);
+            } else {
+                openTab(location.hash.replace('#', '') || 'requests');
             }
+            loadToApprove();
         }).catch(function (error) {
             showError(error);
             openTab('checks');

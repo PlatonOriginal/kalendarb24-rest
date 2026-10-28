@@ -152,8 +152,19 @@ final class RequestService
     public function card(CurrentUser $user, int $id): array
     {
         $portal = $user->portal;
-        $request = $this->load($portal, $id);
-        $history = $this->history($portal, $id);
+        // Заявка, история и роли одним вызовом: карточку открывают по ссылке из уведомления, важна скорость
+        $found = $id > 0 ? $this->storage->findMany($portal, [
+            'request' => [Schema::REQUESTS, ['ID' => $id]],
+            'history' => [Schema::HISTORY, ['PROPERTY_REQ_ID' => $id]],
+            'roles' => [Schema::ROLES, []],
+        ]) : ['request' => []];
+        if ($found['request'] === [])
+        {
+            throw new VacationError('Заявка не найдена');
+        }
+        $request = self::toRequest($found['request'][0]);
+        $history = array_map(self::toHistory(...), $found['history']);
+        $this->roles->remember($portal, $found['roles']);
         $roles = $this->roles->roles($portal);
         $participants = array_merge([$request['userId'], $request['approverId']], array_column($history, 'actorId'));
         $visible = in_array($user->userId, $participants, true)
@@ -312,18 +323,21 @@ final class RequestService
      */
     private function history(Portal $portal, int $requestId): array
     {
-        return array_map(static function (array $item): array {
-            $values = $item['PROPERTY_VALUES'] ?? [];
+        return array_map(self::toHistory(...), $this->storage->find($portal, Schema::HISTORY, ['PROPERTY_REQ_ID' => $requestId]));
+    }
 
-            return [
-                'actorId' => (int)($values['ACTOR_ID'] ?? 0),
-                'action' => (string)($values['ACTION'] ?? ''),
-                'statusFrom' => (string)($values['STATUS_FROM'] ?? ''),
-                'statusTo' => (string)($values['STATUS_TO'] ?? ''),
-                'reason' => (string)($values['REASON'] ?? ''),
-                'createdAt' => (string)($item['DATE_CREATE'] ?? ''),
-            ];
-        }, $this->storage->find($portal, Schema::HISTORY, ['PROPERTY_REQ_ID' => $requestId]));
+    private static function toHistory(array $item): array
+    {
+        $values = $item['PROPERTY_VALUES'] ?? [];
+
+        return [
+            'actorId' => (int)($values['ACTOR_ID'] ?? 0),
+            'action' => (string)($values['ACTION'] ?? ''),
+            'statusFrom' => (string)($values['STATUS_FROM'] ?? ''),
+            'statusTo' => (string)($values['STATUS_TO'] ?? ''),
+            'reason' => (string)($values['REASON'] ?? ''),
+            'createdAt' => (string)($item['DATE_CREATE'] ?? ''),
+        ];
     }
 
     /**

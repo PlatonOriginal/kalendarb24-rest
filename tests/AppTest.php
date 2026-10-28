@@ -73,19 +73,19 @@ final class AppTest extends TestCase
     {
         $store = new MemoryPortalStore();
         $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
-        $http = new FakeTransport([['result' => ['ID' => '7']], ['result' => false]]);
+        $http = new FakeTransport([['result' => ['result' => ['me' => ['ID' => '7'], 'admin' => false]]]]);
 
         $json = $this->request($this->app($http, $store), '/api/storage', [], ['HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok']);
 
         self::assertSame('forbidden', json_decode($json, true)['error']);
-        self::assertCount(2, $http->requests);
+        self::assertCount(1, $http->requests, "только проверка пользователя, к хранилищам не обращались");
     }
 
     public function testApiMeReturnsOnlyIds(): void
     {
         $store = new MemoryPortalStore();
         $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
-        $http = new FakeTransport([['result' => ['ID' => '7', 'NAME' => 'Иван', 'LAST_NAME' => 'Петров']], ['result' => true]]);
+        $http = new FakeTransport([['result' => ['result' => ['me' => ['ID' => '7', 'NAME' => 'Иван', 'LAST_NAME' => 'Петров'], 'admin' => true]]]]);
 
         $json = $this->request($this->app($http, $store), '/api/me', [], ['HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok']);
 
@@ -98,8 +98,7 @@ final class AppTest extends TestCase
         $store = new MemoryPortalStore();
         $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
         $http = new FakeTransport([
-            ['result' => ['ID' => '1']],
-            ['result' => true],
+            ['result' => ['result' => ['me' => ['ID' => '1'], 'admin' => true]]],
             ['result' => [['ID' => '1', 'NAME' => 'Компания', 'UF_HEAD' => '1'], ['ID' => '5', 'NAME' => 'Продажи', 'PARENT' => '1']]],
             ['result' => ['items' => [
                 ['id' => 1, 'name' => 'Компания', 'parentId' => null, 'accessCode' => 'D1'],
@@ -122,8 +121,7 @@ final class AppTest extends TestCase
         $store = new MemoryPortalStore();
         $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
         $http = new FakeTransport([
-            ['result' => ['ID' => '7']],
-            ['result' => false],
+            ['result' => ['result' => ['me' => ['ID' => '7'], 'admin' => false]]],
             ['result' => 55],
             ['result' => true],
             ['result' => [['ID' => '55', 'CREATED_BY' => '1', 'PROPERTY_VALUES' => ['KIND' => 'probe', 'STATUS' => 'probe_updated', 'USER_ID' => '7']]]],
@@ -140,11 +138,11 @@ final class AppTest extends TestCase
         $data = json_decode($json, true);
         self::assertSame(55, $data['itemId']);
         self::assertSame(60, $data['canaryId']);
-        self::assertSame(['ACTION' => 'canary', 'ACTOR_ID' => 1], $http->requests[8]['params']['PROPERTY_VALUES']);
+        self::assertSame(['ACTION' => 'canary', 'ACTOR_ID' => 1], $http->requests[7]['params']['PROPERTY_VALUES']);
         self::assertTrue($data['updateKeepsOtherProperties']);
         self::assertTrue($data['deleted']);
-        self::assertSame(7, $http->requests[2]['params']['PROPERTY_VALUES']['USER_ID']);
-        self::assertSame('a', $http->requests[2]['params']['auth']);
+        self::assertSame(7, $http->requests[1]['params']['PROPERTY_VALUES']['USER_ID']);
+        self::assertSame('a', $http->requests[1]['params']['auth']);
     }
 
     public function testOpeningAppByInstallerRenewsStoredTokens(): void
