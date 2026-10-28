@@ -25,6 +25,7 @@ final class RequestService
         private readonly RoleService $roles,
         private readonly WorkCalendar $calendar,
         private readonly \DateTimeImmutable $today = new \DateTimeImmutable('today'),
+        private readonly bool $allowSelfApproval = false,
     ) {
     }
 
@@ -216,6 +217,11 @@ final class RequestService
         if (!$approverId)
         {
             throw new VacationError('Не найден согласующий: проверьте структуру компании и роли в настройках');
+        }
+        if ($approverId === $userId && !$this->allowSelfApproval)
+        {
+            // Например, директор подаёт заявку, а в ОК назначен только он сам
+            throw new VacationError('Заявку некому согласовать, кроме вас самих: назначьте в отдел кадров другого сотрудника');
         }
 
         return $approverId;

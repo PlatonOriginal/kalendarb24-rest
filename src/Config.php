@@ -12,6 +12,7 @@ final class Config
         public readonly string $dbDsn,
         public readonly string $dbUser,
         public readonly string $dbPassword,
+        public readonly bool $allowSelfApproval,
     ) {
     }
 
@@ -26,6 +27,8 @@ final class Config
             sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $get('DB_HOST', 'db'), $get('DB_NAME', 'kb24rest')),
             $get('DB_USER', 'kb24rest'),
             $get('DB_PASSWORD'),
+            // На время проверки на одном аккаунте. Перед публикацией в Маркете выключить: ALLOW_SELF_APPROVAL=0
+            $get('ALLOW_SELF_APPROVAL', '1') === '1',
         );
     }
 }

@@ -233,4 +233,32 @@ final class RequestServiceTest extends TestCase
         }
         self::assertSame([], $this->http->items[Schema::REQUESTS] ?? []);
     }
+
+    public function testNobodyApprovesOwnRequest(): void
+    {
+        $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
+        $this->rebuild();
+
+        try
+        {
+            $this->service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
+            self::fail('Директор согласовал бы свою заявку сам');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringContainsString('отдел кадров', $e->getMessage());
+        }
+    }
+
+    public function testSelfApprovalCanBeAllowedForTestingOnOneAccount(): void
+    {
+        $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
+        $rest = new RestClient($this->http, new OAuthClient($this->http, 'id', 'secret'), new MemoryPortalStore());
+        $storage = new EntityStorage($rest);
+        $service = new RequestService($storage, new StructureService($rest), new RoleService($storage), new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), true);
+
+        $request = $service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
+
+        self::assertSame(self::DIRECTOR, $request['approverId']);
+    }
 }
