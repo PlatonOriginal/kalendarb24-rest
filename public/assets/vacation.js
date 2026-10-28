@@ -255,18 +255,25 @@
                 .then(function () { button.disabled = false; });
         });
 
+        function pick(title, multiple, ids) {
+            var selected = ids.filter(Boolean).map(function (id) { return { id: id, name: name(id) }; });
+            return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected }).then(function (users) {
+                (users || []).forEach(function (user) { state.names[user.id] = user.name; });
+                return users;
+            });
+        }
         el('pick-director').addEventListener('click', function () {
-            BX24.selectUser(function (user) {
-                if (user) {
-                    state.names[user.id] = user.name;
-                    saveRoles(Number(user.id), state.me.roles.hr);
+            pick('Директор', false, [state.me.roles.director]).then(function (users) {
+                if (users) {
+                    saveRoles(users.length ? users[0].id : null, state.me.roles.hr);
                 }
             });
         });
         el('pick-hr').addEventListener('click', function () {
-            BX24.selectUsers(function (users) {
-                users.forEach(function (user) { state.names[user.id] = user.name; });
-                saveRoles(state.me.roles.director, users.map(function (user) { return Number(user.id); }));
+            pick('Отдел кадров', true, state.me.roles.hr).then(function (users) {
+                if (users) {
+                    saveRoles(state.me.roles.director, users.map(function (user) { return user.id; }));
+                }
             });
         });
         el('card-back').addEventListener('click', function (event) {
