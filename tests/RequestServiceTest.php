@@ -507,4 +507,15 @@ final class RequestServiceTest extends TestCase
 
         self::assertGreaterThan(0, $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['request']['calEventId']);
     }
+
+    public function testOnlyHrMemberRequestGoesToTheirHeadNotDirector(): void
+    {
+        $this->roles->set($this->portal, RoleService::HR, [40]);
+        $this->rebuild();
+        $request = $this->service->create($this->user(40), 'vacation', '2026-11-09', '2026-11-10');
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+
+        self::assertSame(Status::HR_REVIEW, $request['status']);
+        self::assertSame(self::ACCOUNTING_HEAD, $request['approverId'], 'за ОК проверяет руководитель автора, а не директор');
+    }
 }

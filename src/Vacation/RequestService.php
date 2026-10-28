@@ -194,8 +194,7 @@ final class RequestService
 
         if ($request['cancelStep'] === self::CANCEL_HEAD)
         {
-            $hr = array_values(array_diff($this->roles->roles($portal)['hr'], [$request['userId']]));
-            $approverId = $this->leastLoadedHr($portal, $hr) ?? $this->roles->roles($portal)['director'];
+            $approverId = $this->hrApprover($portal, $request['userId'], $request['deptId']);
             if (!$approverId)
             {
                 throw new VacationError('Не найден следующий согласующий отмены: проверьте роли в настройках');
@@ -412,7 +411,7 @@ final class RequestService
         $approverId = match ($status)
         {
             Status::HEAD_REVIEW => $this->structure->orgChart($portal)->nearestHead($userId, $departmentId) ?? $roles['director'],
-            Status::HR_REVIEW => $this->leastLoadedHr($portal, array_values(array_diff($roles['hr'], [$userId]))) ?? $roles['director'],
+            Status::HR_REVIEW => $this->hrApprover($portal, $userId, $departmentId),
             Status::FINAL_APPROVAL => $roles['director'],
             default => null,
         };
@@ -427,6 +426,19 @@ final class RequestService
         }
 
         return $approverId;
+    }
+
+    /**
+     * Кто проверяет заявку за отдел кадров. Свою заявку сотрудник ОК не проверяет: если других сотрудников ОК нет,
+     * шаг достаётся его непосредственному руководителю, а без руководителя — директору.
+     */
+    private function hrApprover(Portal $portal, int $userId, int $departmentId): ?int
+    {
+        $roles = $this->roles->roles($portal);
+
+        return $this->leastLoadedHr($portal, array_values(array_diff($roles['hr'], [$userId])))
+            ?? $this->structure->orgChart($portal)->nearestHead($userId, $departmentId)
+            ?? $roles['director'];
     }
 
     /**
