@@ -48,4 +48,18 @@ final class PdoPortalStore implements PortalStore
 
         return $this->findByMemberId($portal->memberId);
     }
+
+    public function storageVersion(string $memberId): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT storage_version FROM portal WHERE member_id = ?');
+        $stmt->execute([$memberId]);
+        $version = $stmt->fetchColumn();
+
+        return is_string($version) ? $version : null;
+    }
+
+    public function setStorageVersion(string $memberId, string $version): void
+    {
+        $this->pdo->prepare('UPDATE portal SET storage_version = ? WHERE member_id = ?')->execute([$version, $memberId]);
+    }
 }

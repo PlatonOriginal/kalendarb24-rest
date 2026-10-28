@@ -11,4 +11,11 @@ interface PortalStore
      * Вставляет или обновляет портал по member_id и возвращает его с id.
      */
     public function save(Portal $portal): Portal;
+
+    /**
+     * Версия схемы хранилищ entity.*, которую сервер уже создал в портале (хэш Schema::storages()).
+     */
+    public function storageVersion(string $memberId): ?string;
+
+    public function setStorageVersion(string $memberId, string $version): void;
 }

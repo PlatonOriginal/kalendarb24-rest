@@ -15,15 +15,22 @@ final class StructureService
     /** @var array<int, list<int>> */
     private array $userDepartments = [];
 
+    /** @var array<string, OrgChart> структура за время одного запроса, по member_id */
+    private array $charts = [];
+
     public function __construct(private readonly RestClient $rest)
     {
     }
 
     public function orgChart(Portal $portal): OrgChart
     {
-        $rows = $this->rest->listAll($portal, 'department.get');
+        if (!isset($this->charts[$portal->memberId]))
+        {
+            $rows = $this->rest->listAll($portal, 'department.get');
+            $this->charts[$portal->memberId] = new OrgChart(array_map(static fn(array $row) => Department::fromRest($row), $rows));
+        }
 
-        return new OrgChart(array_map(static fn(array $row) => Department::fromRest($row), $rows));
+        return $this->charts[$portal->memberId];
     }
 
     /**

@@ -9,6 +9,9 @@ use Kb24Rest\Http\App;
 use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\RequestService;
+use Kb24Rest\Vacation\RoleService;
+use Kb24Rest\Vacation\WorkCalendar;
 use PHPUnit\Framework\TestCase;
 
 final class AppTest extends TestCase
@@ -18,7 +21,12 @@ final class AppTest extends TestCase
         $oauth = new OAuthClient($http, 'id', 'secret');
         $rest = new RestClient($http, $oauth, $store);
 
-        return new App($store, $oauth, $rest, new UserResolver($store, $rest), new StructureService($rest), new EntityStorage($rest), dirname(__DIR__) . '/templates');
+        $structure = new StructureService($rest);
+        $storage = new EntityStorage($rest);
+        $roles = new RoleService($storage);
+
+        return new App($store, $oauth, $rest, new UserResolver($store, $rest), $structure, $storage, $roles,
+            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates');
     }
 
     private function request(App $app, string $path, array $post = [], array $server = []): string
@@ -143,6 +151,7 @@ final class AppTest extends TestCase
     {
         $store = new MemoryPortalStore();
         $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
+        $store->setStorageVersion('m1', \Kb24Rest\Storage\Schema::version());
         $http = new FakeTransport([[
             'access_token' => 'new', 'refresh_token' => 'new-r', 'expires' => time() + 3600,
             'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 1,
@@ -167,5 +176,21 @@ final class AppTest extends TestCase
         $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid']);
 
         self::assertSame('old', $store->portals['m1']->accessToken);
+    }
+
+    public function testOpeningAppByInstallerAddsStoragesOfNewVersion(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
+        $store->setStorageVersion('m1', 'old-version');
+        $http = new FakeTransport([[
+            'access_token' => 'new', 'refresh_token' => 'new-r', 'expires' => time() + 3600,
+            'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 1,
+        ], ...EntityStorageTest::emptyPortalResponses()]);
+
+        $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid']);
+
+        self::assertSame(\Kb24Rest\Storage\Schema::version(), $store->storageVersion('m1'));
+        self::assertSame('https://test.bitrix24.ru/rest/entity.add.json', $http->requests[2]['url']);
     }
 }

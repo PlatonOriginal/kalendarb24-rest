@@ -179,9 +179,12 @@
         });
     }
 
-    BX24.init(function () {
-        block1();
-        block2();
-        block3();
-    });
+    // Проверки запускает вкладка «Проверки» (vacation.js), уже после BX24.init
+    window.Kb24Checks = {
+        run: function () {
+            block1();
+            block2();
+            block3();
+        }
+    };
 })();

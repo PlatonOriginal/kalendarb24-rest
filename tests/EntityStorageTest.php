@@ -48,7 +48,7 @@ final class EntityStorageTest extends TestCase
 
         $report = $this->storage($http)->ensure($this->portal());
 
-        self::assertSame([Schema::REQUESTS, Schema::HISTORY], $report['createdStorages']);
+        self::assertSame(array_keys(Schema::storages()), $report['createdStorages']);
         self::assertContains('kbreq.USER_ID', $report['addedProperties']);
         $add = $http->requests[1];
         self::assertSame('https://test.bitrix24.ru/rest/entity.add.json', $add['url']);
@@ -61,15 +61,17 @@ final class EntityStorageTest extends TestCase
 
     public function testAddsOnlyMissingPropertiesToExistingStorages(): void
     {
-        $properties = array_map(
+        $storages = Schema::storages();
+        $propertiesOf = static fn(string $entity, array $skip = []) => ['result' => array_map(
             static fn(string $code) => ['PROPERTY' => $code, 'NAME' => $code, 'TYPE' => 'S'],
-            array_keys(Schema::storages()[Schema::REQUESTS]['properties']),
-        );
+            array_values(array_diff(array_keys($storages[$entity]['properties']), $skip)),
+        )];
         $http = new FakeTransport([
-            ['result' => [['ENTITY' => Schema::REQUESTS], ['ENTITY' => Schema::HISTORY]]],
-            ['result' => $properties],
-            ['result' => [['PROPERTY' => 'REQ_ID'], ['PROPERTY' => 'ACTOR_ID']]],
+            ['result' => array_map(static fn(string $entity) => ['ENTITY' => $entity], array_keys($storages))],
+            $propertiesOf(Schema::REQUESTS),
+            $propertiesOf(Schema::HISTORY, ['ACTION']),
             ['result' => true],
+            $propertiesOf(Schema::ROLES),
         ]);
 
         $report = $this->storage($http)->ensure($this->portal());
