@@ -7,13 +7,22 @@
         final_approval: 'У директора',
         approved: 'Утверждена',
         rejected: 'Отклонена',
-        withdrawn: 'Отозвана'
+        withdrawn: 'Отозвана',
+        cancelling: 'Отменяется',
+        cancelled: 'Отменена'
+    };
+    var CANCEL_STEP = {
+        head_review: 'отмену согласует руководитель',
+        hr_review: 'отмену согласует отдел кадров'
     };
     var ACTION = {
         create: 'подал заявку',
         approve: 'согласовал',
         reject: 'отклонил',
-        withdraw: 'отозвал заявку'
+        withdraw: 'отозвал заявку',
+        cancel_start: 'попросил отменить',
+        cancel_approve: 'согласовал отмену',
+        cancel_refuse: 'отказал в отмене'
     };
 
     var state = { me: null, names: {}, checksDone: false };
@@ -107,6 +116,7 @@
             loadToApprove();
         } else if (tab === 'settings') {
             renderRoles();
+            renderOptions();
         } else if (tab === 'checks' && !state.checksDone) {
             state.checksDone = true;
             window.Kb24Checks.run();
@@ -195,26 +205,45 @@
             + '<dt>Вид</dt><dd>' + esc(state.me.kinds[r.kind] || r.kind) + '</dd>'
             + '<dt>Даты</dt><dd>' + esc(period(r)) + '</dd>'
             + '<dt>Дней</dt><dd>' + esc(r.days) + '</dd>'
-            + '<dt>Статус</dt><dd>' + status(r.status) + (r.approverId ? ', решение принимает ' + esc(name(r.approverId)) : '') + '</dd>'
-            + (r.status === 'approved' ? '<dt>Календарь</dt><dd>' + calendarState(r) + '</dd>' : '')
+            + '<dt>Статус</dt><dd>' + status(r.status)
+            + (r.status === 'cancelling' ? ', ' + esc(CANCEL_STEP[r.cancelStep] || '') : '')
+            + (r.approverId ? ', решение принимает ' + esc(name(r.approverId)) : '') + '</dd>'
+            + (r.cancelReason && (r.status === 'cancelling' || r.status === 'cancelled') ? '<dt>Причина отмены</dt><dd>' + esc(r.cancelReason) + '</dd>' : '')
+            + (r.status === 'approved' || r.status === 'cancelling' || r.calError ? '<dt>Календарь</dt><dd>' + calendarState(r) + '</dd>' : '')
             + '</dl>'
             + '<div class="actions">'
             + (data.can.approve ? '<button type="button" class="primary" data-action="approve">Согласовать</button>' : '')
             + (data.can.reject ? '<select id="reject-reason">' + reasonOptions + '</select><button type="button" class="danger" data-action="reject">Отклонить</button>' : '')
             + (data.can.withdraw ? '<button type="button" data-action="withdraw">Отозвать</button>' : '')
+            + (data.can.cancel ? '<input type="text" id="cancel-reason" placeholder="Причина отмены" size="30"><button type="button" class="danger" data-action="cancel">Отменить отсутствие</button>' : '')
+            + (data.can.decideCancel ? '<button type="button" class="primary" data-action="cancel-approve">Согласовать отмену</button>'
+                + '<input type="text" id="refuse-reason" placeholder="Причина отказа" size="30"><button type="button" class="danger" data-action="cancel-refuse">Отказать в отмене</button>' : '')
             + (chatWith && chatWith !== state.me.userId ? '<button type="button" data-chat="' + esc(chatWith) + '">Написать в чат: ' + esc(name(chatWith)) + '</button>' : '')
             + '</div>'
+            + (data.cancelHint ? '<p class="hint">' + esc(data.cancelHint) + '</p>' : '')
             + '<h2>История</h2><ul>' + history + '</ul>'
             + '</div>';
 
         el('card').querySelectorAll('[data-action]').forEach(function (button) {
             button.addEventListener('click', function () {
                 var action = button.dataset.action;
-                var payload = action === 'reject' ? { reason: el('reject-reason').value } : {};
+                var payload = {
+                    reject: function () { return { reason: el('reject-reason').value }; },
+                    cancel: function () { return { reason: el('cancel-reason').value }; },
+                    'cancel-refuse': function () { return { reason: el('refuse-reason').value }; }
+                }[action];
+                payload = payload ? payload() : {};
                 button.disabled = true;
                 api('/api/requests/' + r.id + '/' + action, payload).then(function () {
                     openCard(r.id);
-                    showMessage({ approve: 'Заявка согласована', reject: 'Заявка отклонена', withdraw: 'Заявка отозвана' }[action]);
+                    showMessage({
+                        approve: 'Заявка согласована',
+                        reject: 'Заявка отклонена',
+                        withdraw: 'Заявка отозвана',
+                        cancel: 'Отмена отправлена на согласование',
+                        'cancel-approve': 'Отмена согласована',
+                        'cancel-refuse': 'В отмене отказано'
+                    }[action]);
                 }).catch(function (error) {
                     button.disabled = false;
                     showError(error);
@@ -235,6 +264,18 @@
             el('role-hr').textContent = roles.hr.length ? roles.hr.map(name).join(', ') : 'не выбраны';
             BX24.fitWindow();
         });
+    }
+
+    function renderOptions() {
+        el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
+    }
+
+    function saveOptions() {
+        api('/api/settings/options', { max_cancel_working_days: el('cancel-days').value }).then(function (settings) {
+            state.me.settings = settings;
+            renderOptions();
+            showMessage('Настройки сохранены');
+        }).catch(showError);
     }
 
     function saveRoles(director, hr) {
@@ -292,6 +333,7 @@
                 }
             });
         });
+        el('save-options').addEventListener('click', saveOptions);
         el('card-back').addEventListener('click', function (event) {
             event.preventDefault();
             openTab(location.hash.replace('#', '') || 'requests');

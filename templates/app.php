@@ -52,6 +52,12 @@
         <tr><th>Отдел кадров</th><td id="role-hr"></td><td><button type="button" id="pick-hr">Выбрать</button></td></tr>
     </table>
     <div id="user-picker" hidden></div>
+    <h2>Отмена утверждённого отсутствия</h2>
+    <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем отдел кадров; после этого событие удаляется из календаря.</p>
+    <div class="form">
+        <label>Не позже чем за, раб. дней <input type="number" id="cancel-days" min="0" max="365"></label>
+        <button type="button" id="save-options">Сохранить</button>
+    </div>
 </section>
 
 <section id="tab-checks" hidden>

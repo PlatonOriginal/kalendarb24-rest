@@ -42,7 +42,8 @@ final class Notifier implements AfterResponse
     }
 
     /**
-     * @param string $event review (ждёт решения получателя), step, approved, rejected, withdrawn
+     * @param string $event review (ждёт решения получателя), step, approved, rejected, withdrawn,
+     *                      cancel_review (отмена ждёт решения), cancelled, cancel_refused
      * @param list<int> $to
      */
     public function add(Portal $portal, string $event, array $request, array $to, int $actorId, string $reason = ''): void
@@ -136,6 +137,11 @@ final class Notifier implements AfterResponse
             'rejected' => ($userId === $request['userId'] ? 'Ваша заявка отклонена' : 'Заявка, которую вы согласовали, отклонена')
                 . ($reason !== '' ? ' (' . $reason . ')' : '') . ': ' . ($userId === $request['userId'] ? '' : $author . ', ') . $what,
             'withdrawn' => 'Заявка отозвана автором: ' . $author . ', ' . $what,
+            'cancel_review' => $author . ' просит отменить утверждённое отсутствие: ' . $what
+                . ($request['cancelReason'] !== '' ? '. Причина отмены: ' . $request['cancelReason'] : ''),
+            'cancelled' => ($userId === $request['userId'] ? 'Ваше отсутствие отменено' : 'Отсутствие отменено: ' . $author) . ', ' . $what,
+            'cancel_refused' => 'В отмене отказано, отсутствие остаётся в силе: '
+                . ($userId === $request['userId'] ? '' : $author . ', ') . $what . '. Причина: ' . $item['reason'],
         };
         // Скобки в params[req] кодируем: внутри [URL=...] нераскодированная «]» закрыла бы BB-код раньше времени
         $url = 'https://' . $portal->domain . '/marketplace/view/' . rawurlencode($this->appCode) . '/?params%5Breq%5D=' . $request['id'];

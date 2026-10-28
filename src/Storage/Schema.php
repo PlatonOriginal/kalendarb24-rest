@@ -35,6 +35,8 @@ final class Schema
                     'ROUTE' => ['name' => 'Согласующие (ID через запятую)', 'type' => 'S'],
                     'CAL_EVENT_ID' => ['name' => 'Событие в календаре сотрудника (ID)', 'type' => 'N'],
                     'CAL_ERROR' => ['name' => 'Почему событие не создано', 'type' => 'S'],
+                    'CANCEL_STEP' => ['name' => 'Отмена: шаг (head_review, hr_review, done, refused)', 'type' => 'S'],
+                    'CANCEL_REASON' => ['name' => 'Отмена: причина', 'type' => 'S'],
                 ],
             ],
             self::HISTORY => [
