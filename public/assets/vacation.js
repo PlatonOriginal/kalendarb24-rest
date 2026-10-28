@@ -292,6 +292,11 @@
             bindForm();
             openTab(location.hash.replace('#', '') || 'requests');
             loadToApprove();
+            // Открыто по ссылке из уведомления: /marketplace/view/<код>/?params[req]=ID
+            var placement = BX24.placement.info();
+            if (placement.placement === 'REST_APP_URI' && placement.options && placement.options.req) {
+                openCard(Number(placement.options.req));
+            }
         }).catch(function (error) {
             showError(error);
             openTab('checks');

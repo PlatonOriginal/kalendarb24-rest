@@ -11,6 +11,7 @@ use Kb24Rest\Portal\Portal;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
 use Kb24Rest\Vacation\VacationError;
@@ -32,6 +33,7 @@ final class RequestServiceTest extends TestCase
     private FakePortal $http;
     private RoleService $roles;
     private RequestService $service;
+    private Notifier $notifier;
     private Portal $portal;
 
     protected function setUp(): void
@@ -59,7 +61,8 @@ final class RequestServiceTest extends TestCase
         $rest = new RestClient($this->http, new OAuthClient($this->http, 'id', 'secret'), new MemoryPortalStore());
         $storage = new EntityStorage($rest);
         $this->roles = new RoleService($storage);
-        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'));
+        $this->notifier = new Notifier($rest, 'local.app.code');
+        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier);
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -260,5 +263,85 @@ final class RequestServiceTest extends TestCase
         $request = $service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
 
         self::assertSame(self::DIRECTOR, $request['approverId']);
+    }
+
+    /**
+     * @return list<array{0: string, 1: list<int>}> событие и получатели
+     */
+    private function sent(): array
+    {
+        return array_map(static fn(array $n) => [$n['event'], $n['to']], $this->notifier->pending());
+    }
+
+    public function testApproverAndAuthorAreNotifiedOnEachStep(): void
+    {
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-22');
+        self::assertSame([['review', [self::ACCOUNTING_HEAD]]], $this->sent());
+
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        self::assertSame([['review', [$request['approverId']]], ['step', [self::ACCOUNTANT]]], $this->sent());
+
+        $request = $this->approve($request['approverId'], $request['id']);
+        $request = $this->approve(self::DIRECTOR, $request['id']);
+        self::assertSame([['approved', [self::ACCOUNTANT]]], $this->sent());
+    }
+
+    public function testRejectionReachesAuthorAndThoseWhoApproved(): void
+    {
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-22');
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        $this->rebuild();
+
+        $this->service->reject($this->user($request['approverId']), $request['id'], 'workload');
+
+        self::assertSame([['rejected', [self::ACCOUNTANT, self::ACCOUNTING_HEAD]]], $this->sent());
+        self::assertSame('workload', $this->notifier->pending()[0]['reason']);
+    }
+
+    public function testWithdrawalReachesCurrentAndPastApprovers(): void
+    {
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-22');
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        $this->rebuild();
+
+        $this->service->withdraw($this->user(self::ACCOUNTANT), $request['id']);
+
+        self::assertSame([['withdrawn', [$request['approverId'], self::ACCOUNTING_HEAD]]], $this->sent());
+    }
+
+    public function testNotificationsGoInOneBatchWithLinkToCard(): void
+    {
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-22');
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        $calls = count($this->http->calls);
+
+        $this->notifier->send();
+
+        self::assertSame(['user.get', 'batch'], array_slice($this->http->calls, $calls));
+        self::assertCount(2, $this->http->notifications);
+        [$toHr, $toAuthor] = $this->http->notifications;
+        self::assertSame((string)$request['approverId'], $toHr['USER_ID']);
+        self::assertStringContainsString('Фамилия31 Имя31 просит согласовать', $toHr['MESSAGE']);
+        self::assertStringContainsString('[URL=https://test.bitrix24.ru/marketplace/view/local.app.code/?params%5Breq%5D=' . $request['id'] . ']', $toHr['MESSAGE']);
+        self::assertSame((string)self::ACCOUNTANT, $toAuthor['USER_ID']);
+        self::assertStringContainsString('теперь в отделе кадров', $toAuthor['MESSAGE']);
+        self::assertSame('KB24_REQ_' . $request['id'] . '_' . self::ACCOUNTANT, $toAuthor['TAG']);
+        self::assertSame([], $this->notifier->pending());
+    }
+
+    public function testActorIsNotNotifiedAboutOwnActionUnlessTestingOnOneAccount(): void
+    {
+        $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
+        $rest = new RestClient($this->http, new OAuthClient($this->http, 'id', 'secret'), new MemoryPortalStore());
+        $storage = new EntityStorage($rest);
+        $notifier = new Notifier($rest, 'code', true);
+        $service = new RequestService($storage, new StructureService($rest), new RoleService($storage), new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), true, $notifier);
+
+        $service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
+        self::assertSame([self::DIRECTOR], $notifier->pending()[0]['to']);
+
+        $usual = new Notifier($rest, 'code');
+        $usual->add($this->portal, 'rejected', ['id' => 1], [self::ACCOUNTANT, self::ACCOUNTING_HEAD], self::ACCOUNTING_HEAD);
+        self::assertSame([self::ACCOUNTANT], $usual->pending()[0]['to']);
     }
 }
