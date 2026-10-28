@@ -20,6 +20,12 @@ final class FakePortal implements HttpTransport
     /** @var list<array<string, mixed>> параметры уведомлений, пришедших в batch */
     public array $notifications = [];
 
+    /** @var list<array<string, mixed>> созданные события календаря */
+    public array $events = [];
+
+    /** Ошибка, которой портал ответит на calendar.event.add (например, нет прав на чужой календарь) */
+    public ?array $calendarError = null;
+
     /** @var list<array<string, mixed>> обработчики встроек (placement.*) */
     public array $placements = [];
 
@@ -68,6 +74,7 @@ final class FakePortal implements HttpTransport
                 'UF_DEPARTMENT' => $this->userDepartments[(int)$id] ?? [],
             ], (array)$params['filter']['ID'])],
             'batch' => ['result' => $this->batch((array)$params['cmd'])],
+            'calendar.event.add' => $this->calendarError ?? ['result' => 1000 + array_push($this->events, $params)],
             'placement.get' => ['result' => $this->placements],
             'placement.bind' => ['result' => (bool)($this->placements[] = ['placement' => $params['PLACEMENT'], 'handler' => $params['HANDLER']])],
             'placement.unbind' => ['result' => ['count' => count($this->placements) - count($this->placements = array_values(array_filter(

@@ -164,6 +164,17 @@
         }).catch(showError);
     }
 
+    // Событие «Отсутствую» создаёт сервер после утверждения, результат хранится в заявке
+    function calendarState(r) {
+        if (r.calEventId) {
+            return 'событие «Отсутствую» добавлено в календарь сотрудника';
+        }
+        if (r.calError) {
+            return '<span class="fail">событие не добавлено: ' + esc(r.calError) + '</span>';
+        }
+        return 'событие добавляется, обновите карточку через несколько секунд';
+    }
+
     function renderCard(data) {
         var r = data.request;
         var reasons = state.me.reasons;
@@ -185,6 +196,7 @@
             + '<dt>Даты</dt><dd>' + esc(period(r)) + '</dd>'
             + '<dt>Дней</dt><dd>' + esc(r.days) + '</dd>'
             + '<dt>Статус</dt><dd>' + status(r.status) + (r.approverId ? ', решение принимает ' + esc(name(r.approverId)) : '') + '</dd>'
+            + (r.status === 'approved' ? '<dt>Календарь</dt><dd>' + calendarState(r) + '</dd>' : '')
             + '</dl>'
             + '<div class="actions">'
             + (data.can.approve ? '<button type="button" class="primary" data-action="approve">Согласовать</button>' : '')

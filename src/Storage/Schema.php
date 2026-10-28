@@ -33,6 +33,8 @@ final class Schema
                     'APPROVER_ID' => ['name' => 'Текущий согласующий (ID)', 'type' => 'N'],
                     'STEP' => ['name' => 'Шаг маршрута', 'type' => 'N'],
                     'ROUTE' => ['name' => 'Согласующие (ID через запятую)', 'type' => 'S'],
+                    'CAL_EVENT_ID' => ['name' => 'Событие в календаре сотрудника (ID)', 'type' => 'N'],
+                    'CAL_ERROR' => ['name' => 'Почему событие не создано', 'type' => 'S'],
                 ],
             ],
             self::HISTORY => [

@@ -27,6 +27,7 @@ final class RequestService
         private readonly \DateTimeImmutable $today = new \DateTimeImmutable('today'),
         private readonly bool $allowSelfApproval = false,
         private readonly ?Notifier $notifier = null,
+        private readonly ?AbsenceCalendar $absence = null,
     ) {
     }
 
@@ -94,6 +95,7 @@ final class RequestService
         $request = $this->load($portal, $id);
         if ($next === Status::APPROVED)
         {
+            $this->absence?->add($portal, $request);
             $this->notifier?->add($portal, 'approved', $request, [$request['userId']], $user->userId);
         }
         else
@@ -385,6 +387,8 @@ final class RequestService
             'days' => (int)($values['DAYS'] ?? 0),
             'status' => (string)($values['STATUS'] ?? ''),
             'approverId' => (int)($values['APPROVER_ID'] ?? 0),
+            'calEventId' => (int)($values['CAL_EVENT_ID'] ?? 0),
+            'calError' => (string)($values['CAL_ERROR'] ?? ''),
             'createdAt' => (string)($item['DATE_CREATE'] ?? ''),
         ];
     }
