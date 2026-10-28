@@ -41,13 +41,14 @@ final class UserResolver
             return $cached;
         }
 
-        $me = $this->rest->callAsUser($portal, $userToken, 'user.current');
-        $userId = (int)($me['ID'] ?? 0);
+        // Оба вопроса одним вызовом: каждый запрос к порталу стоит около секунды
+        $batch = $this->rest->callAsUser($portal, $userToken, 'batch', ['halt' => 1, 'cmd' => ['me' => 'user.current', 'admin' => 'user.admin']]);
+        $userId = (int)($batch['result']['me']['ID'] ?? 0);
         if ($userId <= 0)
         {
             throw new RestException('no_user');
         }
-        $isAdmin = (bool)$this->rest->callAsUser($portal, $userToken, 'user.admin');
+        $isAdmin = (bool)($batch['result']['admin'] ?? false);
 
         $user = new CurrentUser($portal, $userId, $isAdmin);
         $this->toCache($hash, $user);

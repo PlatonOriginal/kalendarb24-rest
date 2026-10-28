@@ -46,6 +46,9 @@ use Kb24Rest\Vacation\VacationError;
  */
 final class App
 {
+    /** @var list<\Closure> работа после ответа браузеру */
+    private array $afterResponse = [];
+
     public function __construct(
         private readonly PortalStore $portals,
         private readonly OAuthClient $oauth,
@@ -72,15 +75,20 @@ final class App
         {
             $this->finishResponse();
         }
+        foreach ($this->afterResponse as $task)
+        {
+            $task();
+        }
         $this->notifier?->send();
     }
 
     /**
-     * Отдать ответ браузеру до отправки уведомлений, чтобы согласование не ждало лишние вызовы REST.
+     * Отдать ответ браузеру до отложенной работы (уведомления, обновление токенов),
+     * чтобы страница и согласование не ждали лишние вызовы REST.
      */
     private function finishResponse(): void
     {
-        if ($this->notifier === null || $this->notifier->pending() === [])
+        if ($this->afterResponse === [] && ($this->notifier === null || $this->notifier->pending() === []))
         {
             ob_end_flush();
             return;
@@ -184,25 +192,31 @@ final class App
         $refreshToken = (string)($post['REFRESH_ID'] ?? '');
         if ($refreshToken !== '')
         {
-            try
-            {
-                $tokens = $this->oauth->refresh($refreshToken);
-                $portal = $this->portals->findByMemberId($tokens->memberId);
-                if ($portal !== null && $tokens->userId === $portal->installedBy)
-                {
-                    $portal = $portal->withTokens($tokens);
-                    $this->portals->save($portal);
-                    // Новые хранилища и свойства из следующих версий появляются без переустановки
-                    $this->ensureStorage($portal);
-                }
-            }
-            catch (RestException)
-            {
-                // Страница работает и без этого: токены приложения остаются прежними
-            }
+            // После ответа: страница не ждёт OAuth-сервер, который отвечает только затем, чтобы узнать, кто открыл
+            $this->afterResponse[] = fn() => $this->renewInstallerTokens($refreshToken);
         }
 
         $this->render('app.php', []);
+    }
+
+    private function renewInstallerTokens(string $refreshToken): void
+    {
+        try
+        {
+            $tokens = $this->oauth->refresh($refreshToken);
+            $portal = $this->portals->findByMemberId($tokens->memberId);
+            if ($portal !== null && $tokens->userId === $portal->installedBy)
+            {
+                $portal = $portal->withTokens($tokens);
+                $this->portals->save($portal);
+                // Новые хранилища и свойства из следующих версий появляются без переустановки
+                $this->ensureStorage($portal);
+            }
+        }
+        catch (RestException)
+        {
+            // Страница работает и без этого: токены приложения остаются прежними
+        }
     }
 
     private function me(CurrentUser $user): array

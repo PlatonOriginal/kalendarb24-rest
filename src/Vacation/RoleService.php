@@ -79,15 +79,25 @@ final class RoleService
     {
         if (!isset($this->cache[$portal->memberId]))
         {
-            $byRole = [];
-            foreach ($this->storage->find($portal, Schema::ROLES) as $item)
-            {
-                $values = $item['PROPERTY_VALUES'] ?? [];
-                $byRole[(string)($values['ROLE'] ?? '')][] = (int)($values['USER_ID'] ?? 0);
-            }
-            $this->cache[$portal->memberId] = $byRole;
+            $this->remember($portal, $this->storage->find($portal, Schema::ROLES));
         }
 
         return $this->cache[$portal->memberId];
+    }
+
+    /**
+     * Записи kbrole, уже прочитанные вместе с другими данными (EntityStorage::findMany): второй раз не запрашиваем.
+     *
+     * @param list<array<string, mixed>> $items
+     */
+    public function remember(Portal $portal, array $items): void
+    {
+        $byRole = [];
+        foreach ($items as $item)
+        {
+            $values = $item['PROPERTY_VALUES'] ?? [];
+            $byRole[(string)($values['ROLE'] ?? '')][] = (int)($values['USER_ID'] ?? 0);
+        }
+        $this->cache[$portal->memberId] = $byRole;
     }
 }

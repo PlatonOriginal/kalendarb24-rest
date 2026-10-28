@@ -27,14 +27,15 @@ final class UserResolverTest extends TestCase
 
     public function testResolvesUserByTokenOnStoredEndpoint(): void
     {
-        $http = new FakeTransport([['result' => ['ID' => '15', 'NAME' => 'Иван']], ['result' => false]]);
+        $http = new FakeTransport([['result' => ['result' => ['me' => ['ID' => '15', 'NAME' => 'Иван'], 'admin' => false]]]]);
 
         $user = $this->resolver($http)->resolve('member1', 'user-token');
 
         self::assertSame(15, $user->userId);
         self::assertFalse($user->isAdmin);
         // Адрес портала из БД, токен пользователя, а не приложения
-        self::assertSame('https://test.bitrix24.ru/rest/user.current.json', $http->requests[0]['url']);
+        self::assertSame('https://test.bitrix24.ru/rest/batch.json', $http->requests[0]['url']);
+        self::assertSame(['me' => 'user.current', 'admin' => 'user.admin'], $http->requests[0]['params']['cmd']);
         self::assertSame('user-token', $http->requests[0]['params']['auth']);
     }
 
