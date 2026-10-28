@@ -51,6 +51,7 @@
         <tr><th>Директор</th><td id="role-director"></td><td><button type="button" id="pick-director">Выбрать</button></td></tr>
         <tr><th>Отдел кадров</th><td id="role-hr"></td><td><button type="button" id="pick-hr">Выбрать</button></td></tr>
     </table>
+    <div id="user-picker" hidden></div>
 </section>
 
 <section id="tab-checks" hidden>
@@ -74,6 +75,7 @@
 </section>
 
 <script src="/assets/checks.js"></script>
+<script src="/assets/picker.js"></script>
 <script src="/assets/vacation.js"></script>
 </body>
 </html>

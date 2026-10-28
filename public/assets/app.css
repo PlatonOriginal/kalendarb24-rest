@@ -29,3 +29,11 @@ button.danger { color: #ff5752; }
 .status { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #eef2f4; }
 .status.approved { background: #e5f4e4; }
 .status.rejected, .status.withdrawn { background: #f0efec; color: #828b95; }
+.picker-search input { width: 100%; max-width: 900px; box-sizing: border-box; margin-bottom: 8px; }
+.picker { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 900px; }
+.picker ul { list-style: none; margin: 0; padding: 0; border: 1px solid #e6e9ec; border-radius: 4px; max-height: 320px; overflow-y: auto; }
+.picker li { padding: 6px 8px; cursor: pointer; }
+.picker li:hover, .picker li.active { background: #f5f7f8; }
+.picker li.hint, .picker li.fail { cursor: default; margin: 0; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #eef2f4; margin: 2px 0; }
+.chip a { color: #828b95; text-decoration: none; }
