@@ -17,6 +17,7 @@ use Kb24Rest\Vacation\Kinds;
 use Kb24Rest\Vacation\RejectReasons;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
+use Kb24Rest\Vacation\Settings;
 use Kb24Rest\Vacation\VacationError;
 
 /**
@@ -39,6 +40,8 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/requests/<id>         карточка заявки с историей и доступными действиями
  *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
  *   /api/settings/roles        (POST, администратор) директор и сотрудники ОК
+ *   /api/settings/options      (POST max_cancel_working_days, администратор) настройки в app.option
+ *   /api/requests/<id>/cancel (reason) | cancel-approve | cancel-refuse (reason)   (POST) отмена утверждённой заявки
  * Блок 4:
  *   уведомления о заявках уходят после ответа браузеру; ссылка из уведомления открывает /app
  *   через встройку REST_APP_URI с PLACEMENT_OPTIONS {"req": "<ID>"}
@@ -61,6 +64,7 @@ final class App
         private readonly string $appUrl = '',
         /** @var list<AfterResponse> */
         private readonly array $afterResponse = [],
+        private readonly ?Settings $settings = null,
     ) {
     }
 
@@ -138,9 +142,10 @@ final class App
                     (string)($post['dateTo'] ?? ''),
                 )),
                 (bool)preg_match('~^/api/requests/(\d+)$~', $path, $m) => $this->json($this->requests->card($this->currentUser($server), (int)$m[1])),
-                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw)$~', $path, $m) && $this->isPost($server)
+                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse)$~', $path, $m) && $this->isPost($server)
                     => $this->json($this->decide($this->currentUser($server), (int)$m[1], $m[2], $post)),
                 $path === '/api/settings/roles' && $this->isPost($server) => $this->json($this->saveRoles($this->currentAdmin($server), $post)),
+                $path === '/api/settings/options' && $this->isPost($server) => $this->json($this->saveOptions($this->currentAdmin($server), $post)),
                 default => $this->notFound(),
             };
         }
@@ -304,7 +309,25 @@ final class App
             'roles' => $this->roles->roles($user->portal),
             'kinds' => array_map(static fn(array $kind) => $kind['name'], Kinds::all()),
             'reasons' => RejectReasons::all(),
+            // Только администратору для вкладки «Настройки»: остальным лишний вызов REST при каждом открытии ни к чему
+            'settings' => $user->isAdmin ? ($this->settings?->all($user->portal) ?? Settings::DEFAULTS) : null,
         ];
+    }
+
+    private function saveOptions(CurrentUser $user, array $post): array
+    {
+        if ($this->settings === null)
+        {
+            throw new VacationError('Настройки недоступны');
+        }
+        $value = trim((string)($post['max_cancel_working_days'] ?? ''));
+        if (!preg_match('/^\d+$/', $value))
+        {
+            throw new VacationError('Укажите число рабочих дней от 0 до 365');
+        }
+        $this->settings->setMaxCancelWorkingDays($user->portal, (int)$value);
+
+        return $this->settings->all($user->portal);
     }
 
     private function decide(CurrentUser $user, int $id, string $action, array $post): array
@@ -314,6 +337,9 @@ final class App
             'approve' => $this->requests->approve($user, $id),
             'reject' => $this->requests->reject($user, $id, (string)($post['reason'] ?? '')),
             'withdraw' => $this->requests->withdraw($user, $id),
+            'cancel' => $this->requests->startCancellation($user, $id, (string)($post['reason'] ?? '')),
+            'cancel-approve' => $this->requests->approveCancellation($user, $id),
+            'cancel-refuse' => $this->requests->refuseCancellation($user, $id, (string)($post['reason'] ?? '')),
         };
     }
 

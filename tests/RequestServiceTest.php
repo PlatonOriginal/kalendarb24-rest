@@ -15,6 +15,7 @@ use Kb24Rest\Vacation\AbsenceCalendar;
 use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
+use Kb24Rest\Vacation\Settings;
 use Kb24Rest\Vacation\VacationError;
 use Kb24Rest\Vacation\WorkCalendar;
 use PHPUnit\Framework\TestCase;
@@ -65,7 +66,7 @@ final class RequestServiceTest extends TestCase
         $this->roles = new RoleService($storage);
         $this->notifier = new Notifier($rest, 'local.app.code');
         $this->absence = new AbsenceCalendar($rest, $storage);
-        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence);
+        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence, new Settings($rest));
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -348,9 +349,9 @@ final class RequestServiceTest extends TestCase
         self::assertSame([self::ACCOUNTANT], $usual->pending()[0]['to']);
     }
 
-    private function approveAll(int $authorId): array
+    private function approveAll(int $authorId, string $from = '2026-11-09', string $to = '2026-11-22'): array
     {
-        $request = $this->service->create($this->user($authorId), 'vacation', '2026-11-09', '2026-11-22');
+        $request = $this->service->create($this->user($authorId), 'vacation', $from, $to);
         while ($request['status'] !== Status::APPROVED)
         {
             $request = $this->approve($request['approverId'], $request['id']);
@@ -386,5 +387,90 @@ final class RequestServiceTest extends TestCase
         self::assertSame(Status::APPROVED, $card['request']['status']);
         self::assertSame(0, $card['request']['calEventId']);
         self::assertStringContainsString('ACCESS_DENIED', $card['request']['calError']);
+    }
+
+    public function testCancellationGoesHeadThenHrAndRemovesCalendarEvent(): void
+    {
+        $request = $this->approveAll(self::ACCOUNTANT);
+        $this->absence->run();
+        $this->rebuild();
+
+        $request = $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Перенесли командировку');
+        self::assertSame(Status::CANCELLING, $request['status']);
+        self::assertSame(self::ACCOUNTING_HEAD, $request['approverId']);
+        self::assertSame([['cancel_review', [self::ACCOUNTING_HEAD]]], $this->sent());
+
+        $this->rebuild();
+        $request = $this->service->approveCancellation($this->user(self::ACCOUNTING_HEAD), $request['id']);
+        self::assertSame(RequestService::CANCEL_HR, $request['cancelStep']);
+        self::assertContains($request['approverId'], self::HR);
+
+        $this->rebuild();
+        $hr = $request['approverId'];
+        $request = $this->service->approveCancellation($this->user($hr), $request['id']);
+        self::assertSame(Status::CANCELLED, $request['status']);
+        self::assertSame(0, $request['approverId']);
+        $sent = $this->sent();
+        self::assertSame('cancelled', end($sent)[0]);
+        $recipients = end($sent)[1];
+        foreach ([self::ACCOUNTANT, self::ACCOUNTING_HEAD, self::DIRECTOR] as $participant)
+        {
+            self::assertContains($participant, $recipients);
+        }
+        self::assertNotContains($hr, $recipients, 'тот, кто согласовал отмену, уведомление о ней не получает');
+
+        $this->absence->run();
+        self::assertSame([1001], $this->http->deletedEvents);
+        self::assertSame(0, $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['request']['calEventId']);
+    }
+
+    public function testRefusedCancellationKeepsAbsence(): void
+    {
+        $request = $this->approveAll(self::ACCOUNTANT);
+        $this->rebuild();
+        $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Передумал');
+        $this->rebuild();
+        try
+        {
+            $this->service->refuseCancellation($this->user(self::ACCOUNTING_HEAD), $request['id'], ' ');
+            self::fail('Отказ без причины принят');
+        }
+        catch (VacationError)
+        {
+        }
+
+        $request = $this->service->refuseCancellation($this->user(self::ACCOUNTING_HEAD), $request['id'], 'Некому заменить');
+
+        self::assertSame(Status::APPROVED, $request['status']);
+        self::assertSame(RequestService::CANCEL_REFUSED, $request['cancelStep']);
+        $history = $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['history'];
+        self::assertSame(['cancel_start', 'Передумал'], [$history[4]['action'], $history[4]['reason']]);
+        self::assertSame(['cancel_refuse', 'Некому заменить'], [$history[5]['action'], $history[5]['reason']]);
+        self::assertSame([], $this->http->deletedEvents);
+    }
+
+    public function testCancellationOnlyByAuthorAndNotTooLate(): void
+    {
+        $soon = $this->approveAll(self::ACCOUNTANT, '2026-10-29', '2026-10-30');
+        $later = $this->approveAll(self::SALES_MANAGER);
+        $this->rebuild();
+
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $soon['id']);
+        self::assertFalse($card['can']['cancel']);
+        self::assertSame('Отменить можно не позже чем за 3 раб. дн. до начала', $card['cancelHint']);
+        self::assertTrue($this->service->card($this->user(self::SALES_MANAGER), $later['id'])['can']['cancel']);
+        self::assertFalse($this->service->card($this->user(self::DIRECTOR), $later['id'])['can']['cancel'], 'не автор');
+
+        $this->expectException(VacationError::class);
+        $this->service->startCancellation($this->user(self::DIRECTOR), $later['id'], 'Хочу');
+    }
+
+    public function testCancellationDeadlineComesFromSettings(): void
+    {
+        $soon = $this->approveAll(self::ACCOUNTANT, '2026-10-29', '2026-10-30');
+        $this->http->options = ['max_cancel_working_days' => '1'];
+        $this->rebuild();
+
+        self::assertTrue($this->service->card($this->user(self::ACCOUNTANT), $soon['id'])['can']['cancel']);
     }
 }

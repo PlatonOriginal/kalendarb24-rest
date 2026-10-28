@@ -23,6 +23,12 @@ final class FakePortal implements HttpTransport
     /** @var list<array<string, mixed>> созданные события календаря */
     public array $events = [];
 
+    /** @var list<int> удалённые события календаря */
+    public array $deletedEvents = [];
+
+    /** @var array<string, mixed> app.option */
+    public array $options = [];
+
     /** Ошибка, которой портал ответит на calendar.event.add (например, нет прав на чужой календарь) */
     public ?array $calendarError = null;
 
@@ -75,6 +81,9 @@ final class FakePortal implements HttpTransport
             ], (array)$params['filter']['ID'])],
             'batch' => ['result' => $this->batch((array)$params['cmd'])],
             'calendar.event.add' => $this->calendarError ?? ['result' => 1000 + array_push($this->events, $params)],
+            'calendar.event.delete' => ['result' => (bool)array_push($this->deletedEvents, (int)$params['id'])],
+            'app.option.get' => ['result' => $this->options],
+            'app.option.set' => ['result' => (bool)($this->options = (array)$params['options'] + $this->options)],
             'placement.get' => ['result' => $this->placements],
             'placement.bind' => ['result' => (bool)($this->placements[] = ['placement' => $params['PLACEMENT'], 'handler' => $params['HANDLER']])],
             'placement.unbind' => ['result' => ['count' => count($this->placements) - count($this->placements = array_values(array_filter(

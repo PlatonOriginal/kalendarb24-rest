@@ -15,6 +15,7 @@ use Kb24Rest\Vacation\AbsenceCalendar;
 use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
+use Kb24Rest\Vacation\Settings;
 use Kb24Rest\Vacation\WorkCalendar;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
@@ -34,7 +35,8 @@ $roles = new RoleService($storage);
 // При проверке под одним аккаунтом уведомления приходят и тому, кто сделал действие
 $notifier = new Notifier($rest, $config->appCode, $config->allowSelfApproval);
 $absence = new AbsenceCalendar($rest, $storage);
-$requests = new RequestService($storage, $structure, $roles, new WorkCalendar($rest), new DateTimeImmutable('today'), $config->allowSelfApproval, $notifier, $absence);
+$settings = new Settings($rest);
+$requests = new RequestService($storage, $structure, $roles, new WorkCalendar($rest), new DateTimeImmutable('today'), $config->allowSelfApproval, $notifier, $absence, $settings);
 
-$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $notifier]);
+$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $notifier], $settings);
 $app->handle(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', $_POST, $_SERVER);

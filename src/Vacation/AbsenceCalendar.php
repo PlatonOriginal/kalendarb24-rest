@@ -20,7 +20,7 @@ use Kb24Rest\Storage\Schema;
  */
 final class AbsenceCalendar implements AfterResponse
 {
-    /** @var list<array{portal: Portal, request: array}> */
+    /** @var list<array{portal: Portal, request: array, action: string}> */
     private array $queue = [];
 
     public function __construct(
@@ -31,7 +31,19 @@ final class AbsenceCalendar implements AfterResponse
 
     public function add(Portal $portal, array $request): void
     {
-        $this->queue[] = ['portal' => $portal, 'request' => $request];
+        $this->queue[] = ['portal' => $portal, 'request' => $request, 'action' => 'add'];
+    }
+
+    /**
+     * Удалить событие после отмены заявки, как Calendar::delete в коробке.
+     * https://apidocs.bitrix24.com/api-reference/calendar/calendar-event/calendar-event-delete.html
+     */
+    public function remove(Portal $portal, array $request): void
+    {
+        if ($request['calEventId'] > 0)
+        {
+            $this->queue[] = ['portal' => $portal, 'request' => $request, 'action' => 'remove'];
+        }
     }
 
     public function hasWork(): bool
@@ -43,30 +55,9 @@ final class AbsenceCalendar implements AfterResponse
     {
         $queue = $this->queue;
         $this->queue = [];
-        foreach ($queue as ['portal' => $portal, 'request' => $request])
+        foreach ($queue as ['portal' => $portal, 'request' => $request, 'action' => $action])
         {
-            try
-            {
-                $eventId = (int)$this->rest->call($portal, 'calendar.event.add', [
-                    'type' => 'user',
-                    'ownerId' => $request['userId'],
-                    'name' => Kinds::all()[$request['kind']]['name'] ?? $request['kind'],
-                    'description' => 'Заявка № ' . $request['id'] . ' в приложении «Отпуска»',
-                    'from' => $request['dateFrom'],
-                    'to' => $request['dateTo'],
-                    'skip_time' => 'Y',
-                    'accessibility' => 'absent',
-                    'importance' => 'normal',
-                    'is_meeting' => 'N',
-                    'private_event' => 'N',
-                ]);
-                $result = $eventId > 0 ? ['CAL_EVENT_ID' => $eventId, 'CAL_ERROR' => ''] : ['CAL_ERROR' => 'портал не вернул ID события'];
-            }
-            catch (RestException $e)
-            {
-                $result = ['CAL_ERROR' => mb_substr($e->getMessage(), 0, 250)];
-            }
-
+            $result = $action === 'add' ? $this->create($portal, $request) : $this->delete($portal, $request);
             try
             {
                 $this->storage->update($portal, Schema::REQUESTS, $request['id'], $result);
@@ -75,6 +66,46 @@ final class AbsenceCalendar implements AfterResponse
             {
                 error_log('kb24 calendar: ' . $e->errorCode . ' ' . $e->getMessage());
             }
+        }
+    }
+
+    private function delete(Portal $portal, array $request): array
+    {
+        try
+        {
+            $this->rest->call($portal, 'calendar.event.delete', ['id' => $request['calEventId']]);
+
+            return ['CAL_EVENT_ID' => 0, 'CAL_ERROR' => ''];
+        }
+        catch (RestException $e)
+        {
+            return ['CAL_ERROR' => mb_substr('не удалось удалить событие: ' . $e->getMessage(), 0, 250)];
+        }
+    }
+
+    private function create(Portal $portal, array $request): array
+    {
+        try
+        {
+            $eventId = (int)$this->rest->call($portal, 'calendar.event.add', [
+                'type' => 'user',
+                'ownerId' => $request['userId'],
+                'name' => Kinds::all()[$request['kind']]['name'] ?? $request['kind'],
+                'description' => 'Заявка № ' . $request['id'] . ' в приложении «Отпуска»',
+                'from' => $request['dateFrom'],
+                'to' => $request['dateTo'],
+                'skip_time' => 'Y',
+                'accessibility' => 'absent',
+                'importance' => 'normal',
+                'is_meeting' => 'N',
+                'private_event' => 'N',
+            ]);
+
+            return $eventId > 0 ? ['CAL_EVENT_ID' => $eventId, 'CAL_ERROR' => ''] : ['CAL_ERROR' => 'портал не вернул ID события'];
+        }
+        catch (RestException $e)
+        {
+            return ['CAL_ERROR' => mb_substr($e->getMessage(), 0, 250)];
         }
     }
 }

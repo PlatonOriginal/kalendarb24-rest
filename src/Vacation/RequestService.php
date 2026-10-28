@@ -19,6 +19,11 @@ use Kb24Rest\Structure\StructureService;
  */
 final class RequestService
 {
+    public const CANCEL_HEAD = 'head_review';
+    public const CANCEL_HR = 'hr_review';
+    public const CANCEL_DONE = 'done';
+    public const CANCEL_REFUSED = 'refused';
+
     public function __construct(
         private readonly EntityStorage $storage,
         private readonly StructureService $structure,
@@ -28,6 +33,7 @@ final class RequestService
         private readonly bool $allowSelfApproval = false,
         private readonly ?Notifier $notifier = null,
         private readonly ?AbsenceCalendar $absence = null,
+        private readonly ?Settings $settings = null,
     ) {
     }
 
@@ -149,6 +155,138 @@ final class RequestService
     }
 
     /**
+     * Отмена утверждённой заявки, как в коробке: сотрудник просит отменить не позже чем за N рабочих дней
+     * до начала, отмену согласуют руководитель, затем ОК. Шага бухгалтерии пока нет: нет её роли.
+     */
+    public function startCancellation(CurrentUser $user, int $id, string $reason): array
+    {
+        $portal = $user->portal;
+        $request = $this->load($portal, $id);
+        $check = $this->whyNotCancellable($portal, $request, $user->userId);
+        if ($check !== null)
+        {
+            throw new VacationError($check);
+        }
+        $reason = trim($reason);
+        if ($reason === '')
+        {
+            throw new VacationError('Укажите причину отмены');
+        }
+
+        $approverId = $this->pickApprover($portal, Status::HEAD_REVIEW, $request['userId'], $request['deptId']);
+        $this->storage->update($portal, Schema::REQUESTS, $id, [
+            'STATUS' => Status::CANCELLING,
+            'APPROVER_ID' => $approverId,
+            'CANCEL_STEP' => self::CANCEL_HEAD,
+            'CANCEL_REASON' => mb_substr($reason, 0, 500),
+        ]);
+        $this->log($portal, $id, $user->userId, 'cancel_start', Status::APPROVED, Status::CANCELLING, mb_substr($reason, 0, 500));
+        $request = $this->load($portal, $id);
+        $this->notifier?->add($portal, 'cancel_review', $request, [$approverId], $user->userId);
+
+        return $request;
+    }
+
+    public function approveCancellation(CurrentUser $user, int $id): array
+    {
+        $portal = $user->portal;
+        $request = $this->awaitingCancellationDecisionOf($user, $id);
+
+        if ($request['cancelStep'] === self::CANCEL_HEAD)
+        {
+            $hr = array_values(array_diff($this->roles->roles($portal)['hr'], [$request['userId']]));
+            $approverId = $this->leastLoadedHr($portal, $hr) ?? $this->roles->roles($portal)['director'];
+            if (!$approverId)
+            {
+                throw new VacationError('Не найден следующий согласующий отмены: проверьте роли в настройках');
+            }
+            $this->storage->update($portal, Schema::REQUESTS, $id, ['APPROVER_ID' => $approverId, 'CANCEL_STEP' => self::CANCEL_HR]);
+            $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HEAD, self::CANCEL_HR);
+            $request = $this->load($portal, $id);
+            $this->notifier?->add($portal, 'cancel_review', $request, [$approverId], $user->userId);
+
+            return $request;
+        }
+
+        $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::CANCELLED, 'APPROVER_ID' => 0, 'CANCEL_STEP' => self::CANCEL_DONE]);
+        $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HR, Status::CANCELLED);
+        $request = $this->load($portal, $id);
+        $this->absence?->remove($portal, $request);
+        $this->notifier?->add($portal, 'cancelled', $request, $this->participants($portal, $request), $user->userId);
+
+        return $request;
+    }
+
+    public function refuseCancellation(CurrentUser $user, int $id, string $reason): array
+    {
+        $portal = $user->portal;
+        $request = $this->awaitingCancellationDecisionOf($user, $id);
+        $reason = trim($reason);
+        if ($reason === '')
+        {
+            throw new VacationError('Укажите причину отказа в отмене');
+        }
+
+        $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::APPROVED, 'APPROVER_ID' => 0, 'CANCEL_STEP' => self::CANCEL_REFUSED]);
+        $this->log($portal, $id, $user->userId, 'cancel_refuse', $request['cancelStep'], Status::APPROVED, mb_substr($reason, 0, 500));
+        $request = $this->load($portal, $id);
+        $this->notifier?->add($portal, 'cancel_refused', $request, $this->participants($portal, $request), $user->userId, mb_substr($reason, 0, 500));
+
+        return $request;
+    }
+
+    /**
+     * @return string|null почему сотрудник не может отменить заявку
+     */
+    private function whyNotCancellable(Portal $portal, array $request, int $userId): ?string
+    {
+        if ($request['userId'] !== $userId)
+        {
+            return 'Отменить отсутствие может только сам сотрудник';
+        }
+        if ($request['status'] !== Status::APPROVED)
+        {
+            return 'Отменить можно только утверждённое отсутствие';
+        }
+        $minDays = $this->settings?->maxCancelWorkingDays($portal) ?? Settings::DEFAULTS['max_cancel_working_days'];
+        $start = new \DateTimeImmutable($request['dateFrom']);
+        if ($start <= $this->today || $this->calendar->workingDays($portal)->countBetween($this->today, $start) < $minDays)
+        {
+            return "Отменить можно не позже чем за {$minDays} раб. дн. до начала";
+        }
+
+        return null;
+    }
+
+    private function awaitingCancellationDecisionOf(CurrentUser $user, int $id): array
+    {
+        $request = $this->load($user->portal, $id);
+        if ($request['status'] !== Status::CANCELLING)
+        {
+            throw new VacationError('Отмена уже не ждёт решения');
+        }
+        if ($request['approverId'] !== $user->userId)
+        {
+            throw new VacationError('Решение по отмене сейчас принимает другой сотрудник');
+        }
+
+        return $request;
+    }
+
+    /**
+     * Автор и все, кто участвовал в заявке и её отмене (как getCancellationParticipants в коробке).
+     *
+     * @return list<int>
+     */
+    private function participants(Portal $portal, array $request): array
+    {
+        return array_values(array_unique(array_merge(
+            [$request['userId']],
+            array_column($this->history($portal, $request['id']), 'actorId'),
+        )));
+    }
+
+    /**
      * Карточка: заявка, история и доступные текущему сотруднику действия.
      */
     public function card(CurrentUser $user, int $id): array
@@ -179,6 +317,10 @@ final class RequestService
         }
 
         $review = in_array($request['status'], Status::REVIEW, true);
+        $cancelling = $request['status'] === Status::CANCELLING && $request['approverId'] === $user->userId;
+        // Автору утверждённой заявки: можно ли её отменить, а если нет, то почему
+        $ownApproved = $request['userId'] === $user->userId && $request['status'] === Status::APPROVED;
+        $cancelHint = $ownApproved ? $this->whyNotCancellable($portal, $request, $user->userId) : null;
 
         return [
             'request' => $request,
@@ -187,7 +329,10 @@ final class RequestService
                 'approve' => $review && $request['approverId'] === $user->userId,
                 'reject' => $review && $request['approverId'] === $user->userId,
                 'withdraw' => $review && $request['userId'] === $user->userId,
+                'cancel' => $ownApproved && $cancelHint === null,
+                'decideCancel' => $cancelling,
             ],
+            'cancelHint' => (string)$cancelHint,
         ];
     }
 
@@ -206,7 +351,7 @@ final class RequestService
     {
         return array_values(array_filter(
             $this->findRequests($user->portal, ['PROPERTY_APPROVER_ID' => $user->userId]),
-            static fn(array $request) => in_array($request['status'], Status::REVIEW, true),
+            static fn(array $request) => in_array($request['status'], [...Status::REVIEW, Status::CANCELLING], true),
         ));
     }
 
@@ -389,6 +534,8 @@ final class RequestService
             'approverId' => (int)($values['APPROVER_ID'] ?? 0),
             'calEventId' => (int)($values['CAL_EVENT_ID'] ?? 0),
             'calError' => (string)($values['CAL_ERROR'] ?? ''),
+            'cancelStep' => (string)($values['CANCEL_STEP'] ?? ''),
+            'cancelReason' => (string)($values['CANCEL_REASON'] ?? ''),
             'createdAt' => (string)($item['DATE_CREATE'] ?? ''),
         ];
     }
