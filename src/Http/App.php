@@ -14,7 +14,6 @@ use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 use Kb24Rest\Vacation\Kinds;
-use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RejectReasons;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
@@ -47,7 +46,7 @@ use Kb24Rest\Vacation\VacationError;
 final class App
 {
     /** @var list<\Closure> работа после ответа браузеру */
-    private array $afterResponse = [];
+    private array $tasks = [];
 
     public function __construct(
         private readonly PortalStore $portals,
@@ -59,8 +58,9 @@ final class App
         private readonly RoleService $roles,
         private readonly RequestService $requests,
         private readonly string $templates,
-        private readonly ?Notifier $notifier = null,
         private readonly string $appUrl = '',
+        /** @var list<AfterResponse> */
+        private readonly array $afterResponse = [],
     ) {
     }
 
@@ -75,11 +75,17 @@ final class App
         {
             $this->finishResponse();
         }
-        foreach ($this->afterResponse as $task)
+        foreach ($this->tasks as $task)
         {
             $task();
         }
-        $this->notifier?->send();
+        foreach ($this->afterResponse as $work)
+        {
+            if ($work->hasWork())
+            {
+                $work->run();
+            }
+        }
     }
 
     /**
@@ -88,7 +94,8 @@ final class App
      */
     private function finishResponse(): void
     {
-        if ($this->afterResponse === [] && ($this->notifier === null || $this->notifier->pending() === []))
+        $pending = array_filter($this->afterResponse, static fn(AfterResponse $work) => $work->hasWork());
+        if ($this->tasks === [] && $pending === [])
         {
             ob_end_flush();
             return;
@@ -193,7 +200,7 @@ final class App
         if ($refreshToken !== '')
         {
             // После ответа: страница не ждёт OAuth-сервер, который отвечает только затем, чтобы узнать, кто открыл
-            $this->afterResponse[] = fn() => $this->renewInstallerTokens($refreshToken);
+            $this->tasks[] = fn() => $this->renewInstallerTokens($refreshToken);
         }
 
         $this->render('app.php', []);

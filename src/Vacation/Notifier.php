@@ -6,6 +6,7 @@ namespace Kb24Rest\Vacation;
 use Kb24Rest\Bitrix24\RestClient;
 use Kb24Rest\Bitrix24\RestException;
 use Kb24Rest\Domain\Status;
+use Kb24Rest\Http\AfterResponse;
 use Kb24Rest\Portal\Portal;
 
 /**
@@ -19,7 +20,7 @@ use Kb24Rest\Portal\Portal;
  * Уведомления копятся во время запроса и уходят одним вызовом batch после ответа браузеру (send),
  * чтобы не задерживать согласование. ФИО автора запрашивается только для текста и нигде не сохраняется.
  */
-final class Notifier
+final class Notifier implements AfterResponse
 {
     private const STEP = [
         Status::HEAD_REVIEW => 'у руководителя',
@@ -51,6 +52,16 @@ final class Notifier
         {
             $this->queue[] = ['portal' => $portal, 'event' => $event, 'request' => $request, 'to' => $to, 'actorId' => $actorId, 'reason' => $reason];
         }
+    }
+
+    public function hasWork(): bool
+    {
+        return $this->queue !== [];
+    }
+
+    public function run(): void
+    {
+        $this->send();
     }
 
     /**

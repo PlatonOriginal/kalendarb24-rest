@@ -26,7 +26,7 @@ final class AppTest extends TestCase
         $roles = new RoleService($storage);
 
         return new App($store, $oauth, $rest, new UserResolver($store, $rest), $structure, $storage, $roles,
-            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates', null, $appUrl);
+            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates', $appUrl);
     }
 
     private function request(App $app, string $path, array $post = [], array $server = []): string

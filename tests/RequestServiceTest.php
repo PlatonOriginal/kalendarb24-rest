@@ -11,6 +11,7 @@ use Kb24Rest\Portal\Portal;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\AbsenceCalendar;
 use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
@@ -34,6 +35,7 @@ final class RequestServiceTest extends TestCase
     private RoleService $roles;
     private RequestService $service;
     private Notifier $notifier;
+    private AbsenceCalendar $absence;
     private Portal $portal;
 
     protected function setUp(): void
@@ -62,7 +64,8 @@ final class RequestServiceTest extends TestCase
         $storage = new EntityStorage($rest);
         $this->roles = new RoleService($storage);
         $this->notifier = new Notifier($rest, 'local.app.code');
-        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier);
+        $this->absence = new AbsenceCalendar($rest, $storage);
+        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence);
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -343,5 +346,45 @@ final class RequestServiceTest extends TestCase
         $usual = new Notifier($rest, 'code');
         $usual->add($this->portal, 'rejected', ['id' => 1], [self::ACCOUNTANT, self::ACCOUNTING_HEAD], self::ACCOUNTING_HEAD);
         self::assertSame([self::ACCOUNTANT], $usual->pending()[0]['to']);
+    }
+
+    private function approveAll(int $authorId): array
+    {
+        $request = $this->service->create($this->user($authorId), 'vacation', '2026-11-09', '2026-11-22');
+        while ($request['status'] !== Status::APPROVED)
+        {
+            $request = $this->approve($request['approverId'], $request['id']);
+            self::assertSame($request['status'] === Status::APPROVED, $this->absence->hasWork(), 'событие только после утверждения');
+        }
+
+        return $request;
+    }
+
+    public function testApprovedRequestBecomesAbsenceInAuthorsCalendar(): void
+    {
+        $request = $this->approveAll(self::ACCOUNTANT);
+
+        $this->absence->run();
+
+        self::assertCount(1, $this->http->events);
+        $event = $this->http->events[0];
+        self::assertSame(['user', self::ACCOUNTANT, '2026-11-09', '2026-11-22', 'Y', 'absent'], [$event['type'], $event['ownerId'], $event['from'], $event['to'], $event['skip_time'], $event['accessibility']]);
+        self::assertSame('Ежегодный оплачиваемый отпуск', $event['name']);
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame(1001, $card['request']['calEventId']);
+        self::assertSame('', $card['request']['calError']);
+    }
+
+    public function testCalendarRefusalIsShownInCardAndDoesNotUndoApproval(): void
+    {
+        $this->http->calendarError = ['error' => 'ACCESS_DENIED', 'error_description' => 'Creation of events in the specified calendar is prohibited'];
+        $request = $this->approveAll(self::ACCOUNTANT);
+
+        $this->absence->run();
+
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame(Status::APPROVED, $card['request']['status']);
+        self::assertSame(0, $card['request']['calEventId']);
+        self::assertStringContainsString('ACCESS_DENIED', $card['request']['calError']);
     }
 }
