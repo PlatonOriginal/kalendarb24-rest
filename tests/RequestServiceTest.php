@@ -508,14 +508,51 @@ final class RequestServiceTest extends TestCase
         self::assertGreaterThan(0, $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['request']['calEventId']);
     }
 
-    public function testOnlyHrMemberRequestGoesToTheirHeadNotDirector(): void
+    public function testOnlyHrMemberRequestIsCheckedForHrByTheirHeadOnce(): void
     {
         $this->roles->set($this->portal, RoleService::HR, [40]);
         $this->rebuild();
         $request = $this->service->create($this->user(40), 'vacation', '2026-11-09', '2026-11-10');
         $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
 
-        self::assertSame(Status::HR_REVIEW, $request['status']);
-        self::assertSame(self::ACCOUNTING_HEAD, $request['approverId'], 'за ОК проверяет руководитель автора, а не директор');
+        // За ОК проверяет руководитель автора, а он уже согласовал заявку: шаг засчитан, заявка у директора
+        self::assertSame(Status::FINAL_APPROVAL, $request['status']);
+        self::assertSame(self::DIRECTOR, $request['approverId']);
+        $history = $this->service->card($this->user(40), $request['id'])['history'];
+        self::assertSame(['create', 'approve', 'auto_approve'], array_column($history, 'action'));
+        self::assertSame([Status::HR_REVIEW, Status::FINAL_APPROVAL], [$history[2]['statusFrom'], $history[2]['statusTo']]);
+        self::assertSame(self::ACCOUNTING_HEAD, $history[2]['actorId']);
+        self::assertSame([['review', [self::DIRECTOR]], ['step', [40]]], $this->sent());
+    }
+
+    public function testSkippedStepCanLeadStraightToApproval(): void
+    {
+        // Директор и единственный сотрудник ОК: его согласование засчитывается и за ОК, и последним шагом
+        $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
+        $this->rebuild();
+        $request = $this->service->create($this->user(self::SALES_MANAGER), 'vacation', '2026-11-09', '2026-11-13');
+        self::assertSame(self::DIRECTOR, $request['approverId']);
+
+        $request = $this->approve(self::DIRECTOR, $request['id']);
+        self::assertSame(Status::APPROVED, $request['status']);
+        self::assertSame([['approved', [self::SALES_MANAGER]]], $this->sent());
+    }
+
+    public function testCancellationHrStepIsSkippedForHeadWhoChecksForHr(): void
+    {
+        $this->roles->set($this->portal, RoleService::HR, [40]);
+        $this->rebuild();
+        $request = $this->approveAll(40);
+        $this->absence->run();
+        $this->rebuild();
+        $request = $this->service->startCancellation($this->user(40), $request['id'], 'Перенесли');
+        $this->rebuild();
+
+        $request = $this->service->approveCancellation($this->user(self::ACCOUNTING_HEAD), $request['id']);
+        self::assertSame(Status::CANCELLED, $request['status']);
+        $actions = array_column($this->service->card($this->user(40), $request['id'])['history'], 'action');
+        self::assertSame(['cancel_start', 'cancel_approve', 'cancel_auto_approve'], array_slice($actions, -3));
+        $this->absence->run();
+        self::assertSame([1001], $this->http->deletedEvents);
     }
 }

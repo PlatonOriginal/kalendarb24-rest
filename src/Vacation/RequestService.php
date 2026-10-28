@@ -95,9 +95,21 @@ final class RequestService
         $route = $this->route($portal, $request['userId'], $request['deptId']);
         $next = $route->getNextStatus($request['status']);
         $approverId = $next === Status::APPROVED ? 0 : $this->pickApprover($portal, $next, $request['userId'], $request['deptId']);
+        $approvedBy = [...$this->approvedBy($portal, $id), $user->userId];
+        $this->log($portal, $id, $user->userId, 'approve', $request['status'], $next);
+
+        // Дважды одну заявку никто не согласует: шаг того, кто уже согласовал её раньше, засчитывается сам.
+        // Например, руководитель сотрудника ОК проверяет заявку и за ОК, если другого сотрудника ОК нет.
+        while ($next !== Status::APPROVED && in_array($approverId, $approvedBy, true))
+        {
+            $skipped = $next;
+            $skippedBy = $approverId;
+            $next = $route->getNextStatus($skipped);
+            $approverId = $next === Status::APPROVED ? 0 : $this->pickApprover($portal, $next, $request['userId'], $request['deptId']);
+            $this->log($portal, $id, $skippedBy, 'auto_approve', $skipped, $next);
+        }
 
         $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => $next, 'APPROVER_ID' => $approverId]);
-        $this->log($portal, $id, $user->userId, 'approve', $request['status'], $next);
         $request = $this->load($portal, $id);
         if ($next === Status::APPROVED)
         {
@@ -199,6 +211,14 @@ final class RequestService
             {
                 throw new VacationError('Не найден следующий согласующий отмены: проверьте роли в настройках');
             }
+            if ($approverId === $user->userId)
+            {
+                // Руководитель проверяет отмену и за ОК: второй раз его не спрашиваем
+                $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HEAD, self::CANCEL_HR);
+                $this->log($portal, $id, $user->userId, 'cancel_auto_approve', self::CANCEL_HR, Status::CANCELLED);
+
+                return $this->finishCancellation($user, $id);
+            }
             $this->storage->update($portal, Schema::REQUESTS, $id, ['APPROVER_ID' => $approverId, 'CANCEL_STEP' => self::CANCEL_HR]);
             $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HEAD, self::CANCEL_HR);
             $request = $this->load($portal, $id);
@@ -207,8 +227,15 @@ final class RequestService
             return $request;
         }
 
-        $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::CANCELLED, 'APPROVER_ID' => 0, 'CANCEL_STEP' => self::CANCEL_DONE]);
         $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HR, Status::CANCELLED);
+
+        return $this->finishCancellation($user, $id);
+    }
+
+    private function finishCancellation(CurrentUser $user, int $id): array
+    {
+        $portal = $user->portal;
+        $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::CANCELLED, 'APPROVER_ID' => 0, 'CANCEL_STEP' => self::CANCEL_DONE]);
         $request = $this->load($portal, $id);
         $this->absence?->remove($portal, $request);
         $this->notifier?->add($portal, 'cancelled', $request, $this->participants($portal, $request), $user->userId);
@@ -533,7 +560,7 @@ final class RequestService
         $ids = [];
         foreach ($this->history($portal, $requestId) as $entry)
         {
-            if ($entry['action'] === 'approve')
+            if ($entry['action'] === 'approve' || $entry['action'] === 'auto_approve')
             {
                 $ids[] = $entry['actorId'];
             }
