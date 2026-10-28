@@ -371,6 +371,8 @@ final class RequestServiceTest extends TestCase
         $event = $this->http->events[0];
         self::assertSame(['user', self::ACCOUNTANT, '2026-11-09', '2026-11-22', 'Y', 'absent'], [$event['type'], $event['ownerId'], $event['from'], $event['to'], $event['skip_time'], $event['accessibility']]);
         self::assertSame('Ежегодный оплачиваемый отпуск', $event['name']);
+        self::assertSame('Отпуска', $this->http->sections[self::ACCOUNTANT][0]['NAME'], 'своего календаря с правом add не было, приложение создало');
+        self::assertSame([(int)$this->http->sections[self::ACCOUNTANT][0]['ID'], 'N'], [$event['section'], $event['auto_detect_section']]);
         $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
         self::assertSame(1001, $card['request']['calEventId']);
         self::assertSame('', $card['request']['calError']);
@@ -472,5 +474,37 @@ final class RequestServiceTest extends TestCase
         $this->rebuild();
 
         self::assertTrue($this->service->card($this->user(self::ACCOUNTANT), $soon['id'])['can']['cancel']);
+    }
+
+    public function testEventGoesToEmployeesCalendarWhereAppMayAdd(): void
+    {
+        $this->http->sections[self::ACCOUNTANT] = [
+            ['ID' => '7', 'NAME' => 'Только чтение', 'OWNER_ID' => '31', 'PERM' => ['add' => false]],
+            ['ID' => '8', 'NAME' => 'Мой календарь', 'OWNER_ID' => '31', 'PERM' => ['add' => true]],
+        ];
+        $this->approveAll(self::ACCOUNTANT);
+
+        $this->absence->run();
+
+        self::assertSame(8, $this->http->events[0]['section']);
+        self::assertCount(2, $this->http->sections[self::ACCOUNTANT], 'новый календарь не нужен');
+    }
+
+    public function testAuthorRetriesCalendarAfterRefusal(): void
+    {
+        $this->http->calendarError = ['error' => '', 'error_description' => 'Доступ запрещен'];
+        $request = $this->approveAll(self::ACCOUNTANT);
+        $this->absence->run();
+        $this->rebuild();
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame('Доступ запрещен', $card['request']['calError']);
+        self::assertTrue($card['can']['retryCalendar']);
+        self::assertFalse($this->service->card($this->user(self::ACCOUNTING_HEAD), $request['id'])['can']['retryCalendar']);
+
+        $this->http->calendarError = null;
+        $this->service->retryCalendar($this->user(self::ACCOUNTANT), $request['id']);
+        $this->absence->run();
+
+        self::assertGreaterThan(0, $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['request']['calEventId']);
     }
 }

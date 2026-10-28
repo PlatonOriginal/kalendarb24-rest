@@ -236,6 +236,28 @@ final class RequestService
     }
 
     /**
+     * Повторить запись события в календарь, если в прошлый раз портал отказал.
+     */
+    public function retryCalendar(CurrentUser $user, int $id): array
+    {
+        $portal = $user->portal;
+        $request = $this->load($portal, $id);
+        if ($request['userId'] !== $user->userId && !$user->isAdmin)
+        {
+            throw new VacationError('Повторить может автор заявки или администратор');
+        }
+        if ($request['status'] !== Status::APPROVED || $request['calEventId'] > 0)
+        {
+            throw new VacationError('Событие нужно только утверждённой заявке, у которой его ещё нет');
+        }
+        $this->storage->update($portal, Schema::REQUESTS, $id, ['CAL_ERROR' => '']);
+        $request = $this->load($portal, $id);
+        $this->absence?->add($portal, $request);
+
+        return $request;
+    }
+
+    /**
      * @return string|null почему сотрудник не может отменить заявку
      */
     private function whyNotCancellable(Portal $portal, array $request, int $userId): ?string
@@ -331,6 +353,8 @@ final class RequestService
                 'withdraw' => $review && $request['userId'] === $user->userId,
                 'cancel' => $ownApproved && $cancelHint === null,
                 'decideCancel' => $cancelling,
+                'retryCalendar' => $request['status'] === Status::APPROVED && $request['calEventId'] === 0 && $request['calError'] !== ''
+                    && ($request['userId'] === $user->userId || $user->isAdmin),
             ],
             'cancelHint' => (string)$cancelHint,
         ];
