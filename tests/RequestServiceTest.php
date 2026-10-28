@@ -233,4 +233,20 @@ final class RequestServiceTest extends TestCase
         }
         self::assertSame([], $this->http->items[Schema::REQUESTS] ?? []);
     }
+
+    public function testNobodyApprovesOwnRequest(): void
+    {
+        $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
+        $this->rebuild();
+
+        try
+        {
+            $this->service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
+            self::fail('Директор согласовал бы свою заявку сам');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringContainsString('отдел кадров', $e->getMessage());
+        }
+    }
 }
