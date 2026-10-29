@@ -220,6 +220,18 @@
     // которого нет в документированных значениях IBLOCK_TYPE_ID. Только чтение, ничего не записывает
     function block5Chart() {
         document.getElementById('block5-chart').onclick = function () {
+            // Если весь тип закрыт, пробуем обратиться к графику по коду и проверяем, работает ли lists.* вообще
+            var variants = [
+                ['lists.get (lists): обычные списки, работает ли право «Списки»', 'lists.get', { IBLOCK_TYPE_ID: 'lists' }],
+                ['lists.get (structure, absence): график по коду', 'lists.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }],
+                ['lists.element.get (structure, absence): записи графика по коду', 'lists.element.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }],
+                ['lists.field.get (structure, absence): поля графика по коду', 'lists.field.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }]
+            ];
+            variants.forEach(function (v) {
+                call(v[1], v[2]).then(function (r) {
+                    row('block5', v[0], !r.error, r.error || JSON.stringify(r.data, null, 2).slice(0, 1500));
+                });
+            });
             call('lists.get', { IBLOCK_TYPE_ID: 'structure' }).then(function (lists) {
                 if (lists.error) {
                     row('block5', 'lists.get (structure): инфоблоки оргструктуры', false, lists.error);
