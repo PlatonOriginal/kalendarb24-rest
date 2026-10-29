@@ -62,23 +62,6 @@
 </section>
 
 <section id="tab-checks" hidden>
-    <p class="hint">ФИО показывается только в браузере и на сервер не уходит.</p>
-    <h2>Блок 1: связка портала и приложения</h2>
-    <table id="block1">
-        <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
-        <tbody></tbody>
-    </table>
-    <h2>Блок 2: структура компании</h2>
-    <table id="block2">
-        <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
-        <tbody></tbody>
-    </table>
-    <h2>Блок 3: хранилище данных в портале</h2>
-    <p class="hint">Таблицу прав и пробную запись проверяйте под администратором, прямой доступ из браузера под обычным сотрудником.</p>
-    <table id="block3">
-        <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
-        <tbody></tbody>
-    </table>
     <h2>Блок 5: где оказалось событие в календаре</h2>
     <div class="form">
         <label>Заявка № <input type="number" id="block5-id" min="1"></label>
