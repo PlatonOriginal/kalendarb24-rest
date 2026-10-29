@@ -13,7 +13,9 @@ use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\CalendarService;
 use Kb24Rest\Vacation\Kinds;
+use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\RejectReasons;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
@@ -40,11 +42,14 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/requests/<id>         карточка заявки с историей и доступными действиями
  *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
  *   /api/settings/roles        (POST, администратор) директор и сотрудники ОК
- *   /api/settings/options      (POST max_cancel_working_days, администратор) настройки в app.option
+ *   /api/settings/options      (POST max_cancel_working_days, employees_see_other_departments, администратор) настройки в app.option
  *   /api/requests/<id>/cancel (reason) | cancel-approve | cancel-refuse (reason)   (POST) отмена утверждённой заявки
  * Блок 4:
  *   уведомления о заявках уходят после ответа браузеру; ссылка из уведомления открывает /app
  *   через встройку REST_APP_URI с PLACEMENT_OPTIONS {"req": "<ID>"}
+ * Блок 6:
+ *   /api/calendar          (POST department, from, to) заявки отдела за период и дни, когда лимит исчерпан
+ *   /api/settings/limits   (POST limits: JSON [{department, maxConcurrent, maxOverlap, withSub, withHead}], администратор)
  */
 final class App
 {
@@ -65,6 +70,8 @@ final class App
         /** @var list<AfterResponse> */
         private readonly array $afterResponse = [],
         private readonly ?Settings $settings = null,
+        private readonly ?CalendarService $calendar = null,
+        private readonly ?LimitService $limits = null,
     ) {
     }
 
@@ -146,6 +153,13 @@ final class App
                     => $this->json($this->decide($this->currentUser($server), (int)$m[1], $m[2], $post)),
                 $path === '/api/settings/roles' && $this->isPost($server) => $this->json($this->saveRoles($this->currentAdmin($server), $post)),
                 $path === '/api/settings/options' && $this->isPost($server) => $this->json($this->saveOptions($this->currentAdmin($server), $post)),
+                $path === '/api/settings/limits' && $this->isPost($server) => $this->json($this->saveLimits($this->currentAdmin($server), $post)),
+                $path === '/api/calendar' && $this->isPost($server) && $this->calendar !== null => $this->json($this->calendar->get(
+                    $this->currentUser($server),
+                    (int)($post['department'] ?? 0),
+                    (string)($post['from'] ?? ''),
+                    (string)($post['to'] ?? ''),
+                )),
                 default => $this->notFound(),
             };
         }
@@ -311,7 +325,64 @@ final class App
             'reasons' => RejectReasons::all(),
             // Только администратору для вкладки «Настройки»: остальным лишний вызов REST при каждом открытии ни к чему
             'settings' => $user->isAdmin ? ($this->settings?->all($user->portal) ?? Settings::DEFAULTS) : null,
+            'limits' => $user->isAdmin && $this->limits !== null ? $this->limitsByDepartment($user) : null,
+            'calendar' => $this->calendar?->departments($user),
         ];
+    }
+
+    /**
+     * @return array<string, array<string, mixed>> по ID отдела; ключи строкой, чтобы JSON был объектом даже без лимитов
+     */
+    private function limitsByDepartment(CurrentUser $user): array
+    {
+        $limits = [];
+        foreach ($this->limits->all($user->portal) as $departmentId => $limit)
+        {
+            unset($limit['id']);
+            $limits['d' . $departmentId] = $limit;
+        }
+
+        return $limits;
+    }
+
+    private function saveLimits(CurrentUser $user, array $post): array
+    {
+        if ($this->limits === null)
+        {
+            throw new VacationError('Лимиты недоступны');
+        }
+        $rows = json_decode((string)($post['limits'] ?? ''), true);
+        if (!is_array($rows))
+        {
+            throw new VacationError('Не переданы лимиты');
+        }
+        $number = static function (mixed $value): ?int
+        {
+            $value = trim((string)$value);
+            if ($value === '')
+            {
+                return null;
+            }
+            if (!preg_match('/^\d+$/', $value))
+            {
+                throw new VacationError('В лимитах укажите целое число или оставьте поле пустым');
+            }
+
+            return (int)$value;
+        };
+        foreach ($rows as $row)
+        {
+            $this->limits->save(
+                $user->portal,
+                (int)($row['department'] ?? 0),
+                $number($row['maxConcurrent'] ?? ''),
+                $number($row['maxOverlap'] ?? ''),
+                !empty($row['withSub']),
+                !empty($row['withHead']),
+            );
+        }
+
+        return $this->limitsByDepartment($user);
     }
 
     private function saveOptions(CurrentUser $user, array $post): array
@@ -320,12 +391,19 @@ final class App
         {
             throw new VacationError('Настройки недоступны');
         }
-        $value = trim((string)($post['max_cancel_working_days'] ?? ''));
-        if (!preg_match('/^\d+$/', $value))
+        if (isset($post['max_cancel_working_days']))
         {
-            throw new VacationError('Укажите число рабочих дней от 0 до 365');
+            $value = trim((string)$post['max_cancel_working_days']);
+            if (!preg_match('/^\d+$/', $value))
+            {
+                throw new VacationError('Укажите число рабочих дней от 0 до 365');
+            }
+            $this->settings->setMaxCancelWorkingDays($user->portal, (int)$value);
         }
-        $this->settings->setMaxCancelWorkingDays($user->portal, (int)$value);
+        if (isset($post['employees_see_other_departments']))
+        {
+            $this->settings->setEmployeesSeeOtherDepartments($user->portal, $post['employees_see_other_departments'] === '1');
+        }
 
         return $this->settings->all($user->portal);
     }

@@ -13,6 +13,7 @@ final class Schema
     public const REQUESTS = 'kbreq';
     public const HISTORY = 'kbhist';
     public const ROLES = 'kbrole';
+    public const LIMITS = 'kblimit';
 
     /**
      * @return array<string, array{name: string, properties: array<string, array{name: string, type: string}>}>
@@ -56,6 +57,17 @@ final class Schema
                 'properties' => [
                     'ROLE' => ['name' => 'Роль', 'type' => 'S'],
                     'USER_ID' => ['name' => 'Сотрудник (ID)', 'type' => 'N'],
+                ],
+            ],
+            self::LIMITS => [
+                'name' => 'Отпуска: лимиты отделов',
+                'properties' => [
+                    'DEPT_ID' => ['name' => 'Отдел (ID)', 'type' => 'N'],
+                    // Строкой: пусто значит «без ограничения», а 0 у пересечения значит «не пересекаться вовсе»
+                    'MAX_CONCURRENT' => ['name' => 'Максимум отсутствующих в один день (пусто — без ограничения)', 'type' => 'S'],
+                    'MAX_OVERLAP' => ['name' => 'Максимум дней пересечения двух отсутствий (пусто — без ограничения)', 'type' => 'S'],
+                    'WITH_SUB' => ['name' => 'Учитывать подотделы (Y/N)', 'type' => 'S'],
+                    'WITH_HEAD' => ['name' => 'Учитывать руководителя (Y/N)', 'type' => 'S'],
                 ],
             ],
         ];

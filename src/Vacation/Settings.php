@@ -13,8 +13,11 @@ use Kb24Rest\Portal\Portal;
  */
 final class Settings
 {
-    /** Как в коробке: max_cancel_working_days по умолчанию 3 */
-    public const DEFAULTS = ['max_cancel_working_days' => 3];
+    /** Как в коробке: max_cancel_working_days по умолчанию 3, календарь других отделов сотрудникам не виден (0) */
+    public const DEFAULTS = ['max_cancel_working_days' => 3, 'employees_see_other_departments' => 0];
+
+    /** Настройки «да или нет»: хранятся как 0 и 1 */
+    public const FLAGS = ['employees_see_other_departments'];
 
     /** @var array<string, array<string, int>> */
     private array $cache = [];
@@ -24,7 +27,7 @@ final class Settings
     }
 
     /**
-     * @return array{max_cancel_working_days: int}
+     * @return array{max_cancel_working_days: int, employees_see_other_departments: int}
      */
     public function all(Portal $portal): array
     {
@@ -36,7 +39,7 @@ final class Settings
             {
                 if (isset($stored[$key]) && $stored[$key] !== '')
                 {
-                    $values[$key] = max(0, (int)$stored[$key]);
+                    $values[$key] = in_array($key, self::FLAGS, true) ? (int)((int)$stored[$key] > 0) : max(0, (int)$stored[$key]);
                 }
             }
             $this->cache[$portal->memberId] = $values;
@@ -51,6 +54,20 @@ final class Settings
     public function maxCancelWorkingDays(Portal $portal): int
     {
         return $this->all($portal)['max_cancel_working_days'];
+    }
+
+    /**
+     * Видят ли сотрудники календарь всех отделов, а не только своего и тех, которыми руководят.
+     */
+    public function employeesSeeOtherDepartments(Portal $portal): bool
+    {
+        return $this->all($portal)['employees_see_other_departments'] === 1;
+    }
+
+    public function setEmployeesSeeOtherDepartments(Portal $portal, bool $value): void
+    {
+        $this->rest->call($portal, 'app.option.set', ['options' => ['employees_see_other_departments' => $value ? 1 : 0]]);
+        unset($this->cache[$portal->memberId]);
     }
 
     public function setMaxCancelWorkingDays(Portal $portal, int $days): void
