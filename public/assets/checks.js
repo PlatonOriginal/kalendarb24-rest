@@ -83,9 +83,16 @@
             var variants = [
                 ['lists.get (lists): обычные списки, работает ли право «Списки»', 'lists.get', { IBLOCK_TYPE_ID: 'lists' }],
                 ['lists.get (structure, absence): график по коду', 'lists.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }],
-                ['lists.element.get (structure, absence): записи графика по коду', 'lists.element.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }],
-                ['lists.field.get (structure, absence): поля графика по коду', 'lists.field.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }]
+                ['lists.element.get (structure, absence): записи графика по коду', 'lists.element.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }]
             ];
+            // Поля графика коротко: код, тип и значения списка (по ним приложение выбирает тип отсутствия)
+            call('lists.field.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_CODE: 'absence' }).then(function (fields) {
+                row('block5', 'lists.field.get (structure, absence): поля графика', !fields.error, fields.error || Object.keys(fields.data || {}).map(function (id) {
+                    var f = fields.data[id];
+                    return id + ' ' + (f.CODE || '') + ' (' + f.TYPE + ') «' + f.NAME + '»'
+                        + (f.DISPLAY_VALUES_FORM ? '\n  ' + JSON.stringify(f.DISPLAY_VALUES_FORM) : '');
+                }).join('\n'));
+            });
             variants.forEach(function (v) {
                 call(v[1], v[2]).then(function (r) {
                     row('block5', v[0], !r.error, r.error || JSON.stringify(r.data, null, 2).slice(0, 1500));

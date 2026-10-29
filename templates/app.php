@@ -27,7 +27,7 @@
     </form>
     <h2>Мои заявки</h2>
     <table id="my-requests" class="list">
-        <thead><tr><th>Даты</th><th>Вид</th><th>Дней</th><th>Статус</th><th>Сейчас у</th></tr></thead>
+        <thead><tr><th>№</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Статус</th><th>Сейчас у</th></tr></thead>
         <tbody></tbody>
     </table>
 </section>
@@ -35,7 +35,7 @@
 <section id="tab-approve" hidden>
     <h2>Ждут вашего решения</h2>
     <table id="approve-requests" class="list">
-        <thead><tr><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Шаг</th></tr></thead>
+        <thead><tr><th>№</th><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Шаг</th></tr></thead>
         <tbody></tbody>
     </table>
 </section>
