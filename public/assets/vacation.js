@@ -128,7 +128,7 @@
 
     function fillRows(tableId, items, columns, empty) {
         var body = document.querySelector('#' + tableId + ' tbody');
-        body.innerHTML = items.length ? '' : '<tr><td colspan="5" class="hint">' + esc(empty) + '</td></tr>';
+        body.innerHTML = items.length ? '' : '<tr><td colspan="6" class="hint">' + esc(empty) + '</td></tr>';
         items.forEach(function (item) {
             var tr = document.createElement('tr');
             tr.innerHTML = columns(item).map(function (cell) { return '<td>' + cell + '</td>'; }).join('');
@@ -142,7 +142,7 @@
         api('/api/requests/mine').then(function (data) {
             return loadNames(data.items.map(function (r) { return r.approverId; })).then(function () {
                 fillRows('my-requests', data.items, function (r) {
-                    return [esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status), esc(r.approverId ? name(r.approverId) : '')];
+                    return [esc(r.id), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status), esc(r.approverId ? name(r.approverId) : '')];
                 }, 'Заявок пока нет');
             });
         }).catch(showError);
@@ -153,7 +153,7 @@
             el('approve-count').textContent = data.items.length ? '(' + data.items.length + ')' : '';
             return loadNames(data.items.map(function (r) { return r.userId; })).then(function () {
                 fillRows('approve-requests', data.items, function (r) {
-                    return [esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status)];
+                    return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status)];
                 }, 'Нет заявок, которые ждут вашего решения');
             });
         }).catch(showError);
