@@ -83,6 +83,7 @@
     <div class="form">
         <label>Заявка № <input type="number" id="block5-id" min="1"></label>
         <button type="button" id="block5-run">Проверить</button>
+        <button type="button" id="block5-chart">Доступ к графику отсутствий</button>
     </div>
     <table id="block5">
         <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>

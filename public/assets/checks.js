@@ -216,6 +216,37 @@
         };
     }
 
+    // Можно ли читать «График отсутствий» через lists.*: он лежит в типе инфоблоков оргструктуры (structure),
+    // которого нет в документированных значениях IBLOCK_TYPE_ID. Только чтение, ничего не записывает
+    function block5Chart() {
+        document.getElementById('block5-chart').onclick = function () {
+            call('lists.get', { IBLOCK_TYPE_ID: 'structure' }).then(function (lists) {
+                if (lists.error) {
+                    row('block5', 'lists.get (structure): инфоблоки оргструктуры', false, lists.error);
+                    return;
+                }
+                var items = lists.data || [];
+                row('block5', 'lists.get (structure): инфоблоки оргструктуры', items.length > 0,
+                    items.map(function (b) { return b.ID + ' ' + b.CODE + ' «' + b.NAME + '»'; }).join('\n') || 'пусто');
+                var chart = items.filter(function (b) { return b.CODE === 'absence'; })[0] || items[0];
+                if (!chart) {
+                    return;
+                }
+                call('lists.field.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_ID: chart.ID }).then(function (fields) {
+                    row('block5', 'lists.field.get ' + chart.ID + ': поля графика', !fields.error, fields.error || Object.keys(fields.data || {}).map(function (code) {
+                        var f = fields.data[code];
+                        var values = f.DISPLAY_VALUES_FORM ? ' = ' + JSON.stringify(f.DISPLAY_VALUES_FORM) : '';
+                        return code + ' (' + f.TYPE + ') «' + f.NAME + '»' + values;
+                    }).join('\n'));
+                });
+                call('lists.element.get', { IBLOCK_TYPE_ID: 'structure', IBLOCK_ID: chart.ID }).then(function (elements) {
+                    row('block5', 'lists.element.get ' + chart.ID + ': записи графика', !elements.error,
+                        elements.error || JSON.stringify((elements.data || []).slice(0, 3), null, 2));
+                });
+            });
+        };
+    }
+
     // Проверки запускает вкладка «Проверки» (vacation.js), уже после BX24.init
     window.Kb24Checks = {
         run: function () {
@@ -223,6 +254,7 @@
             block2();
             block3();
             block5();
+            block5Chart();
         }
     };
 })();
