@@ -1,9 +1,10 @@
 <!doctype html>
 <html lang="ru">
 <head>
+    <?php /* ?v= по времени изменения файла: после обновления браузер не берёт старый скрипт из кэша */ ?>
     <meta charset="utf-8">
     <title>Отпуска</title>
-    <link rel="stylesheet" href="/assets/app.css">
+    <link rel="stylesheet" href="/assets/app.css?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/app.css') ?>">
     <script src="https://api.bitrix24.com/api/v1/"></script>
 </head>
 <body>
@@ -89,8 +90,8 @@
     </table>
 </section>
 
-<script src="/assets/checks.js"></script>
-<script src="/assets/picker.js"></script>
-<script src="/assets/vacation.js"></script>
+<script src="/assets/checks.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/checks.js') ?>"></script>
+<script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
+<script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>
 </body>
 </html>
