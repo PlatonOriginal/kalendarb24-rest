@@ -11,14 +11,17 @@ namespace Kb24Rest\Vacation;
 final class Kinds
 {
     /**
-     * @return array<string, array{name: string, deductsBalance: bool}>
+     * chart: как найти тип в «Графике отсутствий». REST отдаёт значения списка без XML_ID (в коробке VACATION,
+     * LEAVEUNPAYED, OTHER), только названия, поэтому ищем по началу слов, а если не нашли, берём «другое».
+     *
+     * @return array<string, array{name: string, deductsBalance: bool, chart: list<string>}>
      */
     public static function all(): array
     {
         return [
-            'vacation' => ['name' => 'Ежегодный оплачиваемый отпуск', 'deductsBalance' => true],
-            'unpaid' => ['name' => 'Отпуск без сохранения заработной платы', 'deductsBalance' => false],
-            'study' => ['name' => 'Учебный отпуск', 'deductsBalance' => false],
+            'vacation' => ['name' => 'Ежегодный оплачиваемый отпуск', 'deductsBalance' => true, 'chart' => ['ежегодн']],
+            'unpaid' => ['name' => 'Отпуск без сохранения заработной платы', 'deductsBalance' => false, 'chart' => ['без содерж', 'без сохран']],
+            'study' => ['name' => 'Учебный отпуск', 'deductsBalance' => false, 'chart' => ['учебн']],
         ];
     }
 

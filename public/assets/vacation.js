@@ -176,15 +176,19 @@
         }).catch(showError);
     }
 
-    // Событие «Отсутствую» создаёт сервер после утверждения, результат хранится в заявке
+    // Запись в графике отсутствий и событие в календаре создаёт сервер после утверждения, результат хранится в заявке
     function calendarState(r) {
+        var parts = [];
+        if (r.absenceId) {
+            parts.push('запись в графике отсутствий добавлена');
+        }
         if (r.calEventId) {
-            return 'событие «Отсутствую» добавлено в календарь сотрудника';
+            parts.push('событие добавлено в календарь сотрудника');
         }
         if (r.calError) {
-            return '<span class="fail">событие не добавлено: ' + esc(r.calError) + '</span>';
+            parts.push('<span class="fail">не добавлено: ' + esc(r.calError) + '</span>');
         }
-        return 'событие добавляется, обновите карточку через несколько секунд';
+        return parts.length ? parts.join('<br>') : 'добавляется, обновите карточку через несколько секунд';
     }
 
     function renderCard(data) {
@@ -211,13 +215,13 @@
             + (r.status === 'cancelling' ? ', ' + esc(CANCEL_STEP[r.cancelStep] || '') : '')
             + (r.approverId ? ', решение принимает ' + esc(name(r.approverId)) : '') + '</dd>'
             + (r.cancelReason && (r.status === 'cancelling' || r.status === 'cancelled') ? '<dt>Причина отмены</dt><dd>' + esc(r.cancelReason) + '</dd>' : '')
-            + (r.status === 'approved' || r.status === 'cancelling' || r.calError ? '<dt>Календарь</dt><dd>' + calendarState(r) + '</dd>' : '')
+            + (r.status === 'approved' || r.status === 'cancelling' || r.calError ? '<dt>График и календарь</dt><dd>' + calendarState(r) + '</dd>' : '')
             + '</dl>'
             + '<div class="actions">'
             + (data.can.approve ? '<button type="button" class="primary" data-action="approve">Согласовать</button>' : '')
             + (data.can.reject ? '<select id="reject-reason">' + reasonOptions + '</select><button type="button" class="danger" data-action="reject">Отклонить</button>' : '')
             + (data.can.withdraw ? '<button type="button" data-action="withdraw">Отозвать</button>' : '')
-            + (data.can.retryCalendar ? '<button type="button" data-action="calendar-retry">Добавить событие ещё раз</button>' : '')
+            + (data.can.retryCalendar ? '<button type="button" data-action="calendar-retry">Добавить в график и календарь</button>' : '')
             + (data.can.cancel ? '<input type="text" id="cancel-reason" placeholder="Причина отмены" size="30"><button type="button" class="danger" data-action="cancel">Отменить отсутствие</button>' : '')
             + (data.can.decideCancel ? '<button type="button" class="primary" data-action="cancel-approve">Согласовать отмену</button>'
                 + '<input type="text" id="refuse-reason" placeholder="Причина отказа" size="30"><button type="button" class="danger" data-action="cancel-refuse">Отказать в отмене</button>' : '')

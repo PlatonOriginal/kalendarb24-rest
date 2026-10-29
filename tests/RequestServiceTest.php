@@ -349,9 +349,9 @@ final class RequestServiceTest extends TestCase
         self::assertSame([self::ACCOUNTANT], $usual->pending()[0]['to']);
     }
 
-    private function approveAll(int $authorId, string $from = '2026-11-09', string $to = '2026-11-22'): array
+    private function approveAll(int $authorId, string $from = '2026-11-09', string $to = '2026-11-22', string $kind = 'vacation'): array
     {
-        $request = $this->service->create($this->user($authorId), 'vacation', $from, $to);
+        $request = $this->service->create($this->user($authorId), $kind, $from, $to);
         while ($request['status'] !== Status::APPROVED)
         {
             $request = $this->approve($request['approverId'], $request['id']);
@@ -369,7 +369,8 @@ final class RequestServiceTest extends TestCase
 
         self::assertCount(1, $this->http->events);
         $event = $this->http->events[0];
-        self::assertSame(['user', self::ACCOUNTANT, '2026-11-09', '2026-11-22', 'Y', 'absent'], [$event['type'], $event['ownerId'], $event['from'], $event['to'], $event['skip_time'], $event['accessibility']]);
+        self::assertSame(['user', self::ACCOUNTANT, '2026-11-09', '2026-11-22', 'Y', 'busy'], [$event['type'], $event['ownerId'], $event['from'], $event['to'], $event['skip_time'], $event['accessibility']]);
+        self::assertSame('busy', $event['accessibility'], '«Отсутствую» график показал бы у администратора, создавшего событие');
         self::assertSame('Ежегодный оплачиваемый отпуск', $event['name']);
         self::assertSame('Отпуска', $this->http->sections[self::ACCOUNTANT][0]['NAME'], 'своего календаря с правом add не было, приложение создало');
         self::assertSame([(int)$this->http->sections[self::ACCOUNTANT][0]['ID'], 'N'], [$event['section'], $event['auto_detect_section']]);
@@ -509,7 +510,8 @@ final class RequestServiceTest extends TestCase
         $this->absence->run();
         $this->rebuild();
         $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
-        self::assertSame('Доступ запрещен', $card['request']['calError']);
+        self::assertSame('календарь: Доступ запрещен', $card['request']['calError']);
+        self::assertGreaterThan(0, $card['request']['absenceId'], 'график записан, несмотря на отказ календаря');
         self::assertTrue($card['can']['retryCalendar']);
         self::assertFalse($this->service->card($this->user(self::ACCOUNTING_HEAD), $request['id'])['can']['retryCalendar']);
 
@@ -518,6 +520,58 @@ final class RequestServiceTest extends TestCase
         $this->absence->run();
 
         self::assertGreaterThan(0, $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['request']['calEventId']);
+        self::assertCount(1, $this->http->chartEntries, 'запись в графике при повторе не дублируется');
+    }
+
+    public function testApprovedRequestGoesToAbsenceChartWithEmployeeAndType(): void
+    {
+        $request = $this->approveAll(self::ACCOUNTANT, '2026-11-09', '2026-11-22');
+        $this->absence->run();
+        $this->rebuild();
+        $this->approveAll(self::ACCOUNTING_HEAD, '2026-11-09', '2026-11-10');
+        $this->absence->run();
+
+        self::assertCount(2, $this->http->chartEntries);
+        $entry = $this->http->chartEntries[0];
+        self::assertSame(['structure', 'absence', 'kb24_req_' . $request['id']], [$entry['IBLOCK_TYPE_ID'], $entry['IBLOCK_CODE'], $entry['ELEMENT_CODE']]);
+        self::assertSame([
+            'NAME' => 'Ежегодный оплачиваемый отпуск',
+            'ACTIVE_FROM' => '09.11.2026',
+            'ACTIVE_TO' => '22.11.2026',
+            'PROPERTY_1' => self::ACCOUNTANT,
+            'PROPERTY_7' => '1',
+        ], $entry['FIELDS']);
+        self::assertSame(self::ACCOUNTING_HEAD, $this->http->chartEntries[1]['FIELDS']['PROPERTY_1']);
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame([3001, ''], [$card['request']['absenceId'], $card['request']['calError']]);
+    }
+
+    public function testChartTypeFollowsKindAndFallsBackToOther(): void
+    {
+        $this->approveAll(self::ACCOUNTANT, '2026-11-09', '2026-11-10', 'unpaid');
+        $this->absence->run();
+        $this->rebuild();
+        // Учебного отпуска в графике нет: берём «другое», как OTHER в коробке
+        $this->approveAll(self::SALES_MANAGER, '2026-11-09', '2026-11-10', 'study');
+        $this->absence->run();
+
+        self::assertSame(['6', '5'], array_map(static fn(array $e) => $e['FIELDS']['PROPERTY_7'], $this->http->chartEntries));
+    }
+
+    public function testCancellationRemovesChartEntry(): void
+    {
+        $request = $this->approveAll(self::ACCOUNTANT);
+        $this->absence->run();
+        $this->rebuild();
+        $request = $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Перенос');
+        $this->rebuild();
+        $request = $this->service->approveCancellation($this->user(self::ACCOUNTING_HEAD), $request['id']);
+        $this->rebuild();
+        $this->service->approveCancellation($this->user($request['approverId']), $request['id']);
+        $this->absence->run();
+
+        self::assertSame([3001], $this->http->deletedChartEntries);
+        self::assertSame(0, $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['request']['absenceId']);
     }
 
     public function testOnlyHrMemberRequestIsCheckedForHrByTheirHeadOnce(): void

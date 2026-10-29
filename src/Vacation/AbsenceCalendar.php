@@ -11,16 +11,21 @@ use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 
 /**
- * Событие «Отсутствую» в календаре сотрудника после утверждения заявки, как в коробке.
+ * После утверждения заявки, как в коробке: запись в «График отсутствий» и событие в календаре сотрудника.
+ * https://apidocs.bitrix24.com/api-reference/lists/elements/lists-element-add.html
  * https://apidocs.bitrix24.com/api-reference/calendar/calendar-event/calendar-event-add.html
  *
- * Пишется токеном приложения (администратор, установивший приложение) в календарь автора заявки.
- * Может ли администратор писать в чужой календарь, документация не говорит: результат сохраняем
- * в заявке (CAL_EVENT_ID или CAL_ERROR) и показываем в карточке.
+ * График отсутствий — инфоблок absence типа structure. Список инфоблоков этого типа (lists.get) портал
+ * не отдаёт (ACCESS_DENIED), а по коду absence чтение и запись работают, это проверено на портале.
+ *
+ * Событие пишется токеном приложения (администратор, установивший приложение). График показывает события
+ * «Отсутствую» по создателю, то есть у администратора, поэтому событие ставим «Занят»: в графике остаётся
+ * только запись сотрудника. Результат сохраняем в заявке (CAL_EVENT_ID, ABSENCE_ID, CAL_ERROR).
  */
 final class AbsenceCalendar implements AfterResponse
 {
     private const SECTION_NAME = 'Отпуска';
+    private const CHART = ['IBLOCK_TYPE_ID' => 'structure', 'IBLOCK_CODE' => 'absence'];
 
     /** @var list<array{portal: Portal, request: array, action: string}> */
     private array $queue = [];
@@ -42,7 +47,7 @@ final class AbsenceCalendar implements AfterResponse
      */
     public function remove(Portal $portal, array $request): void
     {
-        if ($request['calEventId'] > 0)
+        if ($request['calEventId'] > 0 || $request['absenceId'] > 0)
         {
             $this->queue[] = ['portal' => $portal, 'request' => $request, 'action' => 'remove'];
         }
@@ -59,7 +64,7 @@ final class AbsenceCalendar implements AfterResponse
         $this->queue = [];
         foreach ($queue as ['portal' => $portal, 'request' => $request, 'action' => $action])
         {
-            $result = $action === 'add' ? $this->create($portal, $request) : $this->delete($portal, $request);
+            $result = $action === 'add' ? $this->addAll($portal, $request) : $this->removeAll($portal, $request);
             try
             {
                 $this->storage->update($portal, Schema::REQUESTS, $request['id'], $result);
@@ -71,18 +76,132 @@ final class AbsenceCalendar implements AfterResponse
         }
     }
 
-    private function delete(Portal $portal, array $request): array
+    /**
+     * Создаёт то, чего у заявки ещё нет: при повторе после ошибки уже созданное не дублируется.
+     */
+    private function addAll(Portal $portal, array $request): array
+    {
+        $result = [];
+        $errors = [];
+        if ($request['absenceId'] === 0)
+        {
+            [$result['ABSENCE_ID'], $errors[]] = $this->createChartEntry($portal, $request);
+        }
+        if ($request['calEventId'] === 0)
+        {
+            [$result['CAL_EVENT_ID'], $errors[]] = $this->createEvent($portal, $request);
+        }
+        $result['CAL_ERROR'] = mb_substr(implode('; ', array_filter($errors)), 0, 250);
+
+        return $result;
+    }
+
+    private function removeAll(Portal $portal, array $request): array
+    {
+        $result = [];
+        $errors = [];
+        foreach ([
+            'ABSENCE_ID' => [$request['absenceId'], 'lists.element.delete', self::CHART + ['ELEMENT_ID' => $request['absenceId']], 'запись в графике'],
+            'CAL_EVENT_ID' => [$request['calEventId'], 'calendar.event.delete', ['id' => $request['calEventId']], 'событие'],
+        ] as $field => [$id, $method, $params, $what])
+        {
+            if ($id <= 0)
+            {
+                continue;
+            }
+            try
+            {
+                $this->rest->call($portal, $method, $params);
+                $result[$field] = 0;
+            }
+            catch (RestException $e)
+            {
+                $errors[] = 'не удалось удалить ' . $what . ': ' . $e->getMessage();
+            }
+        }
+        $result['CAL_ERROR'] = mb_substr(implode('; ', $errors), 0, 250);
+
+        return $result;
+    }
+
+    /**
+     * Запись в графике отсутствий, как AbsenceChart::add в коробке: сотрудник (свойство USER) и тип (ABSENCE_TYPE).
+     * Свойства ищем по коду, ID свойств и значений на каждом портале свои.
+     *
+     * @return array{0: int, 1: string} ID записи и ошибка
+     */
+    private function createChartEntry(Portal $portal, array $request): array
     {
         try
         {
-            $this->rest->call($portal, 'calendar.event.delete', ['id' => $request['calEventId']]);
+            $userField = $typeField = null;
+            $typeValues = [];
+            foreach ((array)$this->rest->call($portal, 'lists.field.get', self::CHART) as $id => $field)
+            {
+                $code = (string)($field['CODE'] ?? '');
+                if ($code === 'USER')
+                {
+                    $userField = (string)$id;
+                }
+                elseif ($code === 'ABSENCE_TYPE')
+                {
+                    $typeField = (string)$id;
+                    $typeValues = (array)($field['DISPLAY_VALUES_FORM'] ?? []);
+                }
+            }
+            $typeId = $typeField === null ? null : self::chartType($typeValues, $request['kind']);
+            if ($userField === null || $typeId === null)
+            {
+                return [0, 'в графике отсутствий нет поля сотрудника или подходящего типа отсутствия'];
+            }
+            $kind = Kinds::all()[$request['kind']]['name'] ?? $request['kind'];
+            $id = (int)$this->rest->call($portal, 'lists.element.add', self::CHART + [
+                'ELEMENT_CODE' => 'kb24_req_' . $request['id'],
+                'FIELDS' => [
+                    'NAME' => $kind,
+                    'ACTIVE_FROM' => self::portalDate($request['dateFrom']),
+                    'ACTIVE_TO' => self::portalDate($request['dateTo']),
+                    $userField => $request['userId'],
+                    $typeField => $typeId,
+                ],
+            ]);
 
-            return ['CAL_EVENT_ID' => 0, 'CAL_ERROR' => ''];
+            return $id > 0 ? [$id, ''] : [0, 'портал не вернул ID записи в графике'];
         }
         catch (RestException $e)
         {
-            return ['CAL_ERROR' => mb_substr('не удалось удалить событие: ' . $e->getMessage(), 0, 250)];
+            return [0, 'график отсутствий: ' . $e->getMessage()];
         }
+    }
+
+    /**
+     * @param array<string|int, string> $values ID значения => название
+     */
+    private static function chartType(array $values, string $kind): ?string
+    {
+        foreach ([Kinds::all()[$kind]['chart'] ?? [], ['друг']] as $keywords)
+        {
+            foreach ($values as $id => $name)
+            {
+                foreach ($keywords as $keyword)
+                {
+                    if (str_contains(mb_strtolower((string)$name), $keyword))
+                    {
+                        return (string)$id;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Дата в формате портала, как Date::toString() в коробке. Тестовый портал русскоязычный, ДД.ММ.ГГГГ.
+     */
+    private static function portalDate(string $date): string
+    {
+        return (new \DateTimeImmutable($date))->format('d.m.Y');
     }
 
     /**
@@ -123,14 +242,17 @@ final class AbsenceCalendar implements AfterResponse
         ]);
     }
 
-    private function create(Portal $portal, array $request): array
+    /**
+     * @return array{0: int, 1: string} ID события и ошибка
+     */
+    private function createEvent(Portal $portal, array $request): array
     {
         try
         {
             $section = $this->sectionFor($portal, $request['userId']);
             if ($section <= 0)
             {
-                return ['CAL_ERROR' => 'не найден календарь сотрудника, куда приложение может добавить событие'];
+                return [0, 'не найден календарь сотрудника, куда приложение может добавить событие'];
             }
             $eventId = (int)$this->rest->call($portal, 'calendar.event.add', [
                 'section' => $section,
@@ -142,17 +264,17 @@ final class AbsenceCalendar implements AfterResponse
                 'from' => $request['dateFrom'],
                 'to' => $request['dateTo'],
                 'skip_time' => 'Y',
-                'accessibility' => 'absent',
+                'accessibility' => 'busy',
                 'importance' => 'normal',
                 'is_meeting' => 'N',
                 'private_event' => 'N',
             ]);
 
-            return $eventId > 0 ? ['CAL_EVENT_ID' => $eventId, 'CAL_ERROR' => ''] : ['CAL_ERROR' => 'портал не вернул ID события'];
+            return $eventId > 0 ? [$eventId, ''] : [0, 'портал не вернул ID события'];
         }
         catch (RestException $e)
         {
-            return ['CAL_ERROR' => mb_substr($e->getMessage(), 0, 250)];
+            return [0, 'календарь: ' . $e->getMessage()];
         }
     }
 }
