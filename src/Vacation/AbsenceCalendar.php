@@ -20,6 +20,8 @@ use Kb24Rest\Storage\Schema;
  */
 final class AbsenceCalendar implements AfterResponse
 {
+    private const SECTION_NAME = 'Отпуска';
+
     /** @var list<array{portal: Portal, request: array, action: string}> */
     private array $queue = [];
 
@@ -93,9 +95,22 @@ final class AbsenceCalendar implements AfterResponse
      */
     private function sectionFor(Portal $portal, int $userId): int
     {
-        foreach ((array)$this->rest->call($portal, 'calendar.section.get', ['type' => 'user', 'ownerId' => $userId]) as $section)
+        $sections = array_filter(
+            (array)$this->rest->call($portal, 'calendar.section.get', ['type' => 'user', 'ownerId' => $userId]),
+            static fn(array $section) => (int)($section['OWNER_ID'] ?? 0) === $userId,
+        );
+        // Календарь «Отпуска», который приложение создало раньше. PERM.add у него на портале false,
+        // хотя событие в него добавляется: без этой проверки на каждую заявку создавался бы новый календарь
+        foreach ($sections as $section)
         {
-            if ((int)($section['OWNER_ID'] ?? 0) === $userId && !empty($section['PERM']['add']))
+            if (($section['NAME'] ?? '') === self::SECTION_NAME)
+            {
+                return (int)$section['ID'];
+            }
+        }
+        foreach ($sections as $section)
+        {
+            if (!empty($section['PERM']['add']))
             {
                 return (int)$section['ID'];
             }
@@ -104,7 +119,7 @@ final class AbsenceCalendar implements AfterResponse
         return (int)$this->rest->call($portal, 'calendar.section.add', [
             'type' => 'user',
             'ownerId' => $userId,
-            'name' => 'Отпуска',
+            'name' => self::SECTION_NAME,
         ]);
     }
 

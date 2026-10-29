@@ -107,7 +107,8 @@ final class FakePortal implements HttpTransport
     private function addSection(int $ownerId, string $name): int
     {
         $id = 500 + count($this->sections, COUNT_RECURSIVE);
-        $this->sections[$ownerId][] = ['ID' => (string)$id, 'NAME' => $name, 'OWNER_ID' => (string)$ownerId, 'PERM' => ['add' => true]];
+        // Как на портале: в созданный администратором календарь событие добавляется, но PERM.add у него false
+        $this->sections[$ownerId][] = ['ID' => (string)$id, 'NAME' => $name, 'OWNER_ID' => (string)$ownerId, 'PERM' => ['add' => false]];
 
         return $id;
     }
