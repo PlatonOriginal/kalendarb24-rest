@@ -31,8 +31,8 @@ final class FakePortal implements HttpTransport
         'NAME' => ['FIELD_ID' => 'NAME', 'CODE' => null, 'TYPE' => 'NAME'],
         'PROPERTY_1' => ['FIELD_ID' => 'PROPERTY_1', 'CODE' => 'USER', 'TYPE' => 'S:employee'],
         'PROPERTY_7' => ['FIELD_ID' => 'PROPERTY_7', 'CODE' => 'ABSENCE_TYPE', 'TYPE' => 'L', 'DISPLAY_VALUES_FORM' => [
-            '1' => 'отпуск ежегодный', '2' => 'командировка', '3' => 'больничный', '4' => 'отпуск декретный',
-            '5' => 'другое', '6' => 'отпуск без содержания', '7' => 'прогул',
+            '1' => 'отпуск ежегодный', '3' => 'командировка', '5' => 'больничный', '7' => 'отпуск декретный',
+            '9' => 'отгул за свой счет', '11' => 'прогул', '13' => 'другое', '15' => 'персональные календари',
         ]],
     ];
     /** @var list<array<string, mixed>> */

@@ -555,7 +555,7 @@ final class RequestServiceTest extends TestCase
         $this->approveAll(self::SALES_MANAGER, '2026-11-09', '2026-11-10', 'study');
         $this->absence->run();
 
-        self::assertSame(['6', '5'], array_map(static fn(array $e) => $e['FIELDS']['PROPERTY_7'], $this->http->chartEntries));
+        self::assertSame(['9', '13'], array_map(static fn(array $e) => $e['FIELDS']['PROPERTY_7'], $this->http->chartEntries));
     }
 
     public function testCancellationRemovesChartEntry(): void
