@@ -67,8 +67,13 @@
         BX24.fitWindow();
     }
 
+    // Сервер не знает ФИО: в тексте ошибки сотрудник указан как {user:ID}, имя подставляем здесь
     function showError(error) {
-        showMessage(error && error.message ? error.message : 'Не удалось выполнить действие', true);
+        var text = error && error.message ? error.message : 'Не удалось выполнить действие';
+        var ids = (text.match(/\{user:\d+\}/g) || []).map(function (m) { return Number(m.replace(/\D/g, '')); });
+        loadNames(ids).then(function () {
+            showMessage(text.replace(/\{user:(\d+)\}/g, function (m, id) { return name(Number(id)); }), true);
+        });
     }
 
     // ФИО по ID запрашивает браузер, сервер их не видит
@@ -104,21 +109,29 @@
         return '<span class="status ' + esc(code) + '">' + esc(STATUS[code] || code) + '</span>';
     }
 
+    var TABS = ['calendar', 'requests', 'approve', 'settings', 'checks'];
+
     function openTab(tab) {
-        ['requests', 'approve', 'settings', 'checks', 'card'].forEach(function (name) {
+        if (TABS.indexOf(tab) < 0) {
+            tab = 'calendar';
+        }
+        TABS.concat(['card']).forEach(function (name) {
             el('tab-' + name).hidden = name !== tab;
         });
         document.querySelectorAll('.tabs a').forEach(function (link) {
             link.classList.toggle('active', link.dataset.tab === tab);
         });
         showMessage('');
-        if (tab === 'requests') {
+        if (tab === 'calendar') {
+            window.Kb24Calendar.show();
+        } else if (tab === 'requests') {
             loadMine();
         } else if (tab === 'approve') {
             loadToApprove();
         } else if (tab === 'settings') {
             renderRoles();
             renderOptions();
+            renderLimits();
         } else if (tab === 'checks' && !state.checksDone) {
             state.checksDone = true;
             window.Kb24Checks.run();
@@ -169,7 +182,7 @@
             var ids = [r.userId, r.approverId].concat(data.history.map(function (h) { return h.actorId; }));
             return loadNames(ids).then(function () {
                 renderCard(data);
-                ['requests', 'approve', 'settings', 'checks'].forEach(function (name) { el('tab-' + name).hidden = true; });
+                TABS.forEach(function (name) { el('tab-' + name).hidden = true; });
                 el('tab-card').hidden = false;
                 BX24.fitWindow();
             });
@@ -276,14 +289,67 @@
 
     function renderOptions() {
         el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
+        el('see-other-departments').checked = !!(state.me.settings && state.me.settings.employees_see_other_departments);
     }
 
     function saveOptions() {
-        api('/api/settings/options', { max_cancel_working_days: el('cancel-days').value }).then(function (settings) {
+        api('/api/settings/options', {
+            max_cancel_working_days: el('cancel-days').value,
+            employees_see_other_departments: el('see-other-departments').checked ? '1' : '0'
+        }).then(function (settings) {
             state.me.settings = settings;
             renderOptions();
             showMessage('Настройки сохранены');
         }).catch(showError);
+    }
+
+    // Лимиты отделов: пустое поле — без ограничения. Администратор видит все отделы
+    function renderLimits() {
+        var limits = state.me.limits || {};
+        var body = document.querySelector('#limits tbody');
+        body.innerHTML = state.me.calendar.departments.map(function (d) {
+            var limit = limits['d' + d.id] || { maxConcurrent: null, maxOverlap: null, withSub: false, withHead: false };
+            return '<tr data-department="' + d.id + '">'
+                + '<td>' + new Array(d.depth + 1).join('\u00a0\u00a0\u00a0') + esc(d.name) + '</td>'
+                + '<td><input type="number" min="1" data-field="maxConcurrent" value="' + (limit.maxConcurrent === null ? '' : esc(limit.maxConcurrent)) + '"></td>'
+                + '<td><input type="number" min="0" data-field="maxOverlap" value="' + (limit.maxOverlap === null ? '' : esc(limit.maxOverlap)) + '"></td>'
+                + '<td><input type="checkbox" data-field="withSub"' + (limit.withSub ? ' checked' : '') + '></td>'
+                + '<td><input type="checkbox" data-field="withHead"' + (limit.withHead ? ' checked' : '') + '></td>'
+                + '</tr>';
+        }).join('');
+    }
+
+    function limitRow(tr) {
+        var field = function (name) { return tr.querySelector('[data-field="' + name + '"]'); };
+        return {
+            department: Number(tr.dataset.department),
+            maxConcurrent: field('maxConcurrent').value.trim(),
+            maxOverlap: field('maxOverlap').value.trim(),
+            withSub: field('withSub').checked,
+            withHead: field('withHead').checked
+        };
+    }
+
+    function saveLimits() {
+        var limits = state.me.limits || {};
+        // Отправляем только изменённые строки: каждая строка — отдельная запись в портале
+        var changed = Array.prototype.map.call(document.querySelectorAll('#limits tbody tr'), limitRow).filter(function (row) {
+            var old = limits['d' + row.department] || { maxConcurrent: null, maxOverlap: null, withSub: false, withHead: false };
+            return row.maxConcurrent !== (old.maxConcurrent === null ? '' : String(old.maxConcurrent))
+                || row.maxOverlap !== (old.maxOverlap === null ? '' : String(old.maxOverlap))
+                || row.withSub !== old.withSub || row.withHead !== old.withHead;
+        });
+        if (!changed.length) {
+            showMessage('Лимиты не изменились');
+            return;
+        }
+        var button = el('save-limits');
+        button.disabled = true;
+        api('/api/settings/limits', { limits: JSON.stringify(changed) }).then(function (saved) {
+            state.me.limits = saved;
+            renderLimits();
+            showMessage('Лимиты сохранены');
+        }).catch(showError).then(function () { button.disabled = false; });
     }
 
     function saveRoles(director, hr) {
@@ -342,9 +408,10 @@
             });
         });
         el('save-options').addEventListener('click', saveOptions);
+        el('save-limits').addEventListener('click', saveLimits);
         el('card-back').addEventListener('click', function (event) {
             event.preventDefault();
-            openTab(location.hash.replace('#', '') || 'requests');
+            openTab(location.hash.replace('#', '') || 'calendar');
         });
     }
 
@@ -361,10 +428,29 @@
             state.me = me;
             document.querySelector('[data-tab="settings"]').hidden = !me.isAdmin;
             bindForm();
+            window.Kb24Calendar.init({
+                api: api,
+                esc: esc,
+                me: function () { return state.me; },
+                loadNames: loadNames,
+                name: name,
+                rememberName: function (id, text) { state.names[id] = text; },
+                status: status,
+                statusName: function (code) { return STATUS[code] || code; },
+                openCard: function (id) { openCard(id); },
+                createFrom: function (date) {
+                    location.hash = 'requests';
+                    openTab('requests');
+                    var form = el('new-request');
+                    form.dateFrom.value = date;
+                    form.dateTo.value = date;
+                    form.dateTo.focus();
+                }
+            });
             if (card) {
                 showCard(card);
             } else {
-                openTab(location.hash.replace('#', '') || 'requests');
+                openTab(location.hash.replace('#', '') || 'calendar');
             }
             loadToApprove();
         }).catch(function (error) {

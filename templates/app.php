@@ -10,12 +10,17 @@
 <body>
 <h1>Отпуска</h1>
 <nav class="tabs">
+    <a href="#calendar" data-tab="calendar">Календарь</a>
     <a href="#requests" data-tab="requests">Мои заявки</a>
     <a href="#approve" data-tab="approve">На согласовании <span id="approve-count"></span></a>
     <a href="#settings" data-tab="settings" hidden>Настройки</a>
     <a href="#checks" data-tab="checks">Проверки</a>
 </nav>
 <p id="message" class="message" hidden></p>
+
+<section id="tab-calendar" hidden>
+    <div id="calendar"></div>
+</section>
 
 <section id="tab-requests" hidden>
     <form id="new-request" class="form">
@@ -57,8 +62,21 @@
     <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем отдел кадров; после этого событие удаляется из календаря.</p>
     <div class="form">
         <label>Не позже чем за, раб. дней <input type="number" id="cancel-days" min="0" max="365"></label>
+    </div>
+    <h2>Календарь</h2>
+    <div class="form">
+        <label class="check"><input type="checkbox" id="see-other-departments"> Сотрудники видят календарь других отделов</label>
         <button type="button" id="save-options">Сохранить</button>
     </div>
+    <p class="hint">Без этой настройки сотрудник видит свой отдел и отделы, которыми руководит. Директор, отдел кадров и администратор видят все отделы.</p>
+    <h2>Лимиты отделов</h2>
+    <p class="hint">Пустое поле — без ограничения. Лимит проверяется при подаче заявки, руководитель отдела в нём не считается, если не отмечено «Учитывать руководителя».
+        Заявки относятся к отделу, в котором сотрудник был при подаче.</p>
+    <table id="limits">
+        <thead><tr><th>Отдел</th><th>Максимум отсутствующих в один день</th><th>Максимум дней пересечения двух отсутствий</th><th>Учитывать подотделы</th><th>Учитывать руководителя</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p><button type="button" id="save-limits">Сохранить лимиты</button></p>
 </section>
 
 <section id="tab-checks" hidden>
@@ -75,6 +93,7 @@
 </section>
 
 <script src="/assets/checks.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/checks.js') ?>"></script>
+<script src="/assets/calendar.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/calendar.js') ?>"></script>
 <script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
 <script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>
 </body>

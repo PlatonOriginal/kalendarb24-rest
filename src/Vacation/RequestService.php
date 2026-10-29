@@ -5,6 +5,7 @@ namespace Kb24Rest\Vacation;
 
 use Kb24Rest\Domain\ApprovalRoute;
 use Kb24Rest\Domain\DateRange;
+use Kb24Rest\Domain\LimitViolation;
 use Kb24Rest\Domain\Status;
 use Kb24Rest\Portal\CurrentUser;
 use Kb24Rest\Portal\Portal;
@@ -15,7 +16,7 @@ use Kb24Rest\Structure\StructureService;
 /**
  * Заявки и согласование по маршруту по умолчанию, как в коробке: руководитель → ОК → директор.
  * Все проверки здесь, на сервере: сотрудник не может изменить заявку в обход, данные в портале пишет только сервер.
- * Пока нет: настраиваемых маршрутов, заместителей, лимитов отделов и остатков (следующие блоки).
+ * Пока нет: настраиваемых маршрутов, заместителей и остатков (следующие блоки).
  */
 final class RequestService
 {
@@ -34,6 +35,7 @@ final class RequestService
         private readonly ?Notifier $notifier = null,
         private readonly ?AbsenceCalendar $absence = null,
         private readonly ?Settings $settings = null,
+        private readonly ?LimitService $limits = null,
     ) {
     }
 
@@ -60,6 +62,14 @@ final class RequestService
             if (Status::isActive($existing['status']) && $range->overlapDays($this->parseRange($existing['dateFrom'], $existing['dateTo'])) > 0)
             {
                 throw new VacationError('На эти даты у вас уже есть заявка');
+            }
+        }
+        if ($this->limits !== null && Kinds::all()[$kind]['countsInLimit'])
+        {
+            $violations = $this->limits->check($portal, $departmentId, $user->userId, $range);
+            if ($violations !== [])
+            {
+                throw new VacationError(implode('. ', array_map(fn(LimitViolation $v) => $this->describeViolation($portal, $v), $violations)));
             }
         }
 
@@ -304,6 +314,23 @@ final class RequestService
         }
 
         return null;
+    }
+
+    /**
+     * Сервер не знает ФИО: вместо имени коллеги пишем {user:ID}, браузер подставит имя.
+     */
+    private function describeViolation(Portal $portal, LimitViolation $violation): string
+    {
+        if ($violation->rule === LimitViolation::CONCURRENT)
+        {
+            $days = array_map(static fn(\DateTimeImmutable $day) => $day->format('d.m'), $violation->days);
+
+            return 'В отделе исчерпан лимит одновременных отсутствий: ' . implode(', ', $days);
+        }
+        $other = $this->load($portal, (int)$violation->requestId);
+        $dates = (new \DateTimeImmutable($other['dateFrom']))->format('d.m') . '–' . (new \DateTimeImmutable($other['dateTo']))->format('d.m');
+
+        return "Пересечение с отсутствием {user:{$other['userId']}} ({$dates}) — {$violation->overlapDays} дн., больше допустимого";
     }
 
     private function awaitingCancellationDecisionOf(CurrentUser $user, int $id): array
@@ -583,7 +610,7 @@ final class RequestService
         ]);
     }
 
-    private static function toRequest(array $item): array
+    public static function toRequest(array $item): array
     {
         $values = $item['PROPERTY_VALUES'] ?? [];
 

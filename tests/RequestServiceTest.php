@@ -12,6 +12,8 @@ use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 use Kb24Rest\Vacation\AbsenceCalendar;
+use Kb24Rest\Vacation\CalendarService;
+use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
@@ -37,6 +39,8 @@ final class RequestServiceTest extends TestCase
     private RequestService $service;
     private Notifier $notifier;
     private AbsenceCalendar $absence;
+    private LimitService $limits;
+    private CalendarService $calendar;
     private Portal $portal;
 
     protected function setUp(): void
@@ -66,7 +70,11 @@ final class RequestServiceTest extends TestCase
         $this->roles = new RoleService($storage);
         $this->notifier = new Notifier($rest, 'local.app.code');
         $this->absence = new AbsenceCalendar($rest, $storage);
-        $this->service = new RequestService($storage, new StructureService($rest), $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence, new Settings($rest));
+        $structure = new StructureService($rest);
+        $settings = new Settings($rest);
+        $this->limits = new LimitService($storage, $structure);
+        $this->calendar = new CalendarService($structure, $this->roles, $this->limits, $settings);
+        $this->service = new RequestService($storage, $structure, $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence, $settings, $this->limits);
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -620,5 +628,115 @@ final class RequestServiceTest extends TestCase
         self::assertSame(['cancel_start', 'cancel_approve', 'cancel_auto_approve'], array_slice($actions, -3));
         $this->absence->run();
         self::assertSame([1001], $this->http->deletedEvents);
+    }
+
+    public function testConcurrentLimitBlocksDaysWhenDepartmentIsFull(): void
+    {
+        $this->limits->save($this->portal, 14, 1, null, false, false);
+        $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+
+        try
+        {
+            $this->service->create($this->user(40), 'unpaid', '2026-11-12', '2026-11-16');
+            self::fail('Лимит не сработал');
+        }
+        catch (VacationError $e)
+        {
+            self::assertSame('В отделе исчерпан лимит одновременных отсутствий: 12.11, 13.11', $e->getMessage());
+        }
+
+        // Руководитель в лимите не считается, пока это не включено
+        $this->service->create($this->user(self::ACCOUNTING_HEAD), 'vacation', '2026-11-10', '2026-11-11');
+        // И другие дни свободны
+        self::assertSame(Status::HEAD_REVIEW, $this->service->create($this->user(40), 'unpaid', '2026-11-16', '2026-11-17')['status']);
+    }
+
+    public function testOverlapLimitNamesColleagueByIdForBrowser(): void
+    {
+        $this->limits->save($this->portal, 14, null, 2, false, false);
+        $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+
+        $this->expectExceptionMessage('Пересечение с отсутствием {user:31} (09.11–13.11) — 3 дн., больше допустимого');
+        $this->service->create($this->user(40), 'vacation', '2026-11-11', '2026-11-20');
+    }
+
+    public function testWithdrawnRequestFreesTheSlot(): void
+    {
+        $this->limits->save($this->portal, 14, 1, null, false, false);
+        $first = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->service->withdraw($this->user(self::ACCOUNTANT), $first['id']);
+        $this->rebuild();
+
+        self::assertSame(Status::HEAD_REVIEW, $this->service->create($this->user(40), 'vacation', '2026-11-09', '2026-11-13')['status']);
+    }
+
+    public function testHeadCountsWhenIncluded(): void
+    {
+        $this->limits->save($this->portal, 14, 1, null, false, true);
+        $this->service->create($this->user(self::ACCOUNTING_HEAD), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+
+        $this->expectException(VacationError::class);
+        $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-10', '2026-11-10');
+    }
+
+    public function testSubdepartmentsCountWhenIncluded(): void
+    {
+        // Компания (1) с подотделами: сотрудник продаж (5) занимает место в лимите компании
+        $this->limits->save($this->portal, 1, 1, null, true, false);
+        $this->service->create($this->user(self::SALES_MANAGER), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+
+        self::assertSame(['2026-11-09', '2026-11-10'], $this->limits->fullDays($this->portal, 1, \Kb24Rest\Domain\DateRange::fromStrings('2026-11-08', '2026-11-10')));
+        $this->limits->save($this->portal, 1, 1, null, false, false);
+        self::assertSame([], $this->limits->fullDays($this->portal, 1, \Kb24Rest\Domain\DateRange::fromStrings('2026-11-08', '2026-11-10')));
+    }
+
+    public function testEmptyLimitIsRemovedFromStorage(): void
+    {
+        $this->limits->save($this->portal, 14, 2, 0, true, false);
+        self::assertSame(['maxConcurrent' => 2, 'maxOverlap' => 0, 'withSub' => true, 'withHead' => false], $this->limits->limit($this->portal, 14));
+
+        $this->limits->save($this->portal, 14, null, null, false, false);
+        self::assertSame([], $this->http->items[Schema::LIMITS]);
+    }
+
+    public function testCalendarShowsDepartmentRequestsAndFullDays(): void
+    {
+        $this->limits->save($this->portal, 14, 1, null, false, false);
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->service->create($this->user(self::SALES_MANAGER), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+
+        $data = $this->calendar->get($this->user(40), 14, '2026-11-01', '2026-11-30');
+
+        self::assertSame([$request['id']], array_column($data['requests'], 'id'));
+        self::assertSame(['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13'], $data['fullDays']);
+        self::assertSame(self::ACCOUNTING_HEAD, $data['headId']);
+        self::assertArrayNotHasKey('days', $data['requests'][0]);
+    }
+
+    public function testEmployeeSeesOwnDepartmentAndHeadSeesManagedOnes(): void
+    {
+        self::assertSame([5], $this->calendar->visibleDepartmentIds($this->user(self::SALES_MANAGER)));
+        self::assertSame([14], $this->calendar->visibleDepartmentIds($this->user(self::ACCOUNTING_HEAD)));
+        self::assertSame([1, 5, 14], $this->calendar->visibleDepartmentIds($this->user(self::DIRECTOR)));
+        self::assertSame([1, 5, 14], $this->calendar->visibleDepartmentIds($this->user(41)));
+        self::assertSame([1, 5, 14], $this->calendar->visibleDepartmentIds($this->user(200, true)));
+
+        $this->expectExceptionMessage('Нет доступа к календарю этого отдела');
+        $this->calendar->get($this->user(self::SALES_MANAGER), 14, '2026-11-01', '2026-11-30');
+    }
+
+    public function testOptionLetsEmployeesSeeAllDepartmentsInTreeOrder(): void
+    {
+        $this->http->options = ['employees_see_other_departments' => '1'];
+
+        $tree = $this->calendar->departments($this->user(self::SALES_MANAGER));
+
+        self::assertSame(5, $tree['myDepartment']);
+        self::assertSame([[1, 0], [5, 1], [14, 1]], array_map(static fn(array $d) => [$d['id'], $d['depth']], $tree['departments']));
     }
 }

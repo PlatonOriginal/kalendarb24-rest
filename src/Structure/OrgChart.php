@@ -81,4 +81,79 @@ final class OrgChart
 
         return $chain;
     }
+
+    /**
+     * Отдел и все его подотделы.
+     *
+     * @return list<int>
+     */
+    public function withChildren(int $departmentId): array
+    {
+        $ids = [$departmentId];
+        for ($i = 0; $i < count($ids); $i++)
+        {
+            foreach ($this->departments as $department)
+            {
+                if ($department->parentId === $ids[$i] && !in_array($department->id, $ids, true))
+                {
+                    $ids[] = $department->id;
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Отделы, которыми руководит сотрудник.
+     *
+     * @return list<int>
+     */
+    public function headedBy(int $userId): array
+    {
+        $ids = [];
+        foreach ($this->departments as $department)
+        {
+            if ($department->headUserId === $userId)
+            {
+                $ids[] = $department->id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Отделы в порядке дерева с глубиной, для выпадающего списка: родитель, под ним его подотделы.
+     *
+     * @return list<array{department: Department, depth: int}>
+     */
+    public function tree(): array
+    {
+        $children = [];
+        $roots = [];
+        foreach ($this->departments as $department)
+        {
+            if ($department->parentId !== null && isset($this->departments[$department->parentId]))
+            {
+                $children[$department->parentId][] = $department;
+            }
+            else
+            {
+                $roots[] = $department;
+            }
+        }
+        $result = [];
+        $walk = static function (array $level, int $depth) use (&$walk, &$result, $children): void
+        {
+            foreach ($level as $department)
+            {
+                $result[] = ['department' => $department, 'depth' => $depth];
+                $walk($children[$department->id] ?? [], $depth + 1);
+            }
+        };
+        $walk($roots, 0);
+
+        return $result;
+    }
 }

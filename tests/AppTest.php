@@ -158,6 +158,7 @@ final class AppTest extends TestCase
         $html = $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid', 'member_id' => 'm1']);
 
         self::assertStringContainsString('tab-checks', $html);
+        self::assertStringContainsString('tab-calendar', $html);
         self::assertSame('new', $store->portals['m1']->accessToken);
         self::assertSame(1, $store->portals['m1']->installedBy);
     }
