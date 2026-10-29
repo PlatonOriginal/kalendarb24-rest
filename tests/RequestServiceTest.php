@@ -490,6 +490,18 @@ final class RequestServiceTest extends TestCase
         self::assertCount(2, $this->http->sections[self::ACCOUNTANT], 'новый календарь не нужен');
     }
 
+    public function testAppCalendarIsCreatedOnceAndReused(): void
+    {
+        $this->approveAll(self::ACCOUNTANT, '2026-11-09', '2026-11-10');
+        $this->absence->run();
+        $this->rebuild();
+        $this->approveAll(self::ACCOUNTANT, '2026-11-16', '2026-11-17');
+        $this->absence->run();
+
+        self::assertCount(1, $this->http->sections[self::ACCOUNTANT]);
+        self::assertSame($this->http->events[0]['section'], $this->http->events[1]['section']);
+    }
+
     public function testAuthorRetriesCalendarAfterRefusal(): void
     {
         $this->http->calendarError = ['error' => '', 'error_description' => 'Доступ запрещен'];
