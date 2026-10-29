@@ -272,9 +272,9 @@ final class RequestService
         {
             throw new VacationError('Повторить может автор заявки или администратор');
         }
-        if ($request['status'] !== Status::APPROVED || $request['calEventId'] > 0)
+        if ($request['status'] !== Status::APPROVED || ($request['calEventId'] > 0 && $request['absenceId'] > 0))
         {
-            throw new VacationError('Событие нужно только утверждённой заявке, у которой его ещё нет');
+            throw new VacationError('Событие и запись в графике нужны только утверждённой заявке, у которой их ещё нет');
         }
         $this->storage->update($portal, Schema::REQUESTS, $id, ['CAL_ERROR' => '']);
         $request = $this->load($portal, $id);
@@ -379,7 +379,9 @@ final class RequestService
                 'withdraw' => $review && $request['userId'] === $user->userId,
                 'cancel' => $ownApproved && $cancelHint === null,
                 'decideCancel' => $cancelling,
-                'retryCalendar' => $request['status'] === Status::APPROVED && $request['calEventId'] === 0 && $request['calError'] !== ''
+                // Ещё и заявки, утверждённые до записи в график: у них есть событие, но нет записи
+                'retryCalendar' => $request['status'] === Status::APPROVED && ($request['calEventId'] === 0 || $request['absenceId'] === 0)
+                    && ($request['calError'] !== '' || $request['calEventId'] > 0)
                     && ($request['userId'] === $user->userId || $user->isAdmin),
             ],
             'cancelHint' => (string)$cancelHint,
@@ -597,6 +599,7 @@ final class RequestService
             'approverId' => (int)($values['APPROVER_ID'] ?? 0),
             'calEventId' => (int)($values['CAL_EVENT_ID'] ?? 0),
             'calError' => (string)($values['CAL_ERROR'] ?? ''),
+            'absenceId' => (int)($values['ABSENCE_ID'] ?? 0),
             'cancelStep' => (string)($values['CANCEL_STEP'] ?? ''),
             'cancelReason' => (string)($values['CANCEL_REASON'] ?? ''),
             'createdAt' => (string)($item['DATE_CREATE'] ?? ''),

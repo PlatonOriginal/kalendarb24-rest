@@ -26,6 +26,21 @@ final class FakePortal implements HttpTransport
     /** @var list<int> удалённые события календаря */
     public array $deletedEvents = [];
 
+    /** @var array<string, array<string, mixed>> поля «Графика отсутствий», как lists.field.get на тестовом портале */
+    public array $chartFields = [
+        'NAME' => ['FIELD_ID' => 'NAME', 'CODE' => null, 'TYPE' => 'NAME'],
+        'PROPERTY_1' => ['FIELD_ID' => 'PROPERTY_1', 'CODE' => 'USER', 'TYPE' => 'S:employee'],
+        'PROPERTY_7' => ['FIELD_ID' => 'PROPERTY_7', 'CODE' => 'ABSENCE_TYPE', 'TYPE' => 'L', 'DISPLAY_VALUES_FORM' => [
+            '1' => 'отпуск ежегодный', '2' => 'командировка', '3' => 'больничный', '4' => 'отпуск декретный',
+            '5' => 'другое', '6' => 'отпуск без содержания', '7' => 'прогул',
+        ]],
+    ];
+    /** @var list<array<string, mixed>> */
+    public array $chartEntries = [];
+    /** @var list<int> */
+    public array $deletedChartEntries = [];
+    public ?array $chartError = null;
+
     /** @var array<int, list<array<string, mixed>>> календари сотрудников (calendar.section.get) по ID владельца */
     public array $sections = [];
 
@@ -95,6 +110,9 @@ final class FakePortal implements HttpTransport
                 $this->placements,
                 static fn(array $p) => !($p['placement'] === $params['PLACEMENT'] && $p['handler'] === $params['HANDLER']),
             )))]],
+            'lists.field.get' => $this->chartError ?? ['result' => $this->chartFields],
+            'lists.element.add' => $this->chartError ?? ['result' => 3000 + array_push($this->chartEntries, $params)],
+            'lists.element.delete' => ['result' => (bool)array_push($this->deletedChartEntries, (int)$params['ELEMENT_ID'])],
             'calendar.settings.get' => ['result' => $this->calendarSettings],
             'entity.item.add' => ['result' => $this->add($entity, $params)],
             'entity.item.update' => ['result' => $this->update($entity, (int)$params['ID'], (array)($params['PROPERTY_VALUES'] ?? []))],
