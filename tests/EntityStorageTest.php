@@ -71,8 +71,8 @@ final class EntityStorageTest extends TestCase
             $propertiesOf(Schema::REQUESTS),
             $propertiesOf(Schema::HISTORY, ['ACTION']),
             ['result' => true],
-            $propertiesOf(Schema::ROLES),
-            $propertiesOf(Schema::LIMITS),
+            // Остальные хранилища уже полные
+            ...array_map($propertiesOf, array_slice(array_keys($storages), 2)),
         ]);
 
         $report = $this->storage($http)->ensure($this->portal());

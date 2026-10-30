@@ -16,7 +16,7 @@ use Kb24Rest\Structure\StructureService;
 /**
  * Заявки и согласование по маршруту по умолчанию, как в коробке: руководитель → ОК → директор.
  * Все проверки здесь, на сервере: сотрудник не может изменить заявку в обход, данные в портале пишет только сервер.
- * Пока нет: настраиваемых маршрутов, заместителей и остатков (следующие блоки).
+ * Пока нет: настраиваемых маршрутов и заместителей (следующие блоки).
  */
 final class RequestService
 {
@@ -36,6 +36,7 @@ final class RequestService
         private readonly ?AbsenceCalendar $absence = null,
         private readonly ?Settings $settings = null,
         private readonly ?LimitService $limits = null,
+        private readonly ?BalanceService $balances = null,
     ) {
     }
 
@@ -76,6 +77,24 @@ final class RequestService
         $days = Kinds::all()[$kind]['deductsBalance']
             ? $this->calendar->workingDays($portal)->countVacationDays($range)
             : $range->getDays();
+
+        if ($this->balances !== null && Kinds::all()[$kind]['deductsBalance'])
+        {
+            // Годовщины приёма до начала отпуска уже добавят дни к остатку
+            $balance = $this->balances->get($portal, $user->userId, $range->from);
+            if ($balance !== null && $days > $balance['available'] + 1e-9)
+            {
+                throw new VacationError(sprintf(
+                    'Недостаточно дней отпуска: в заявке %d дн., к началу отпуска доступно %s дн. (остаток %s дн. на %s%s, из них %s дн. уже в других заявках)',
+                    $days,
+                    self::formatDays(max(0, $balance['available'])),
+                    self::formatDays($balance['days']),
+                    (new \DateTimeImmutable($balance['asOf']))->format('d.m.Y'),
+                    $balance['accrued'] > 0 ? ', плюс ' . self::formatDays($balance['accrued']) . ' дн. за новый рабочий год' : '',
+                    self::formatDays($balance['used']),
+                ));
+            }
+        }
 
         $route = $this->route($portal, $user->userId, $departmentId);
         $status = $route->getFirstStatus();
@@ -314,6 +333,11 @@ final class RequestService
         }
 
         return null;
+    }
+
+    public static function formatDays(float $days): string
+    {
+        return str_replace('.', ',', (string)round($days, 2));
     }
 
     /**
