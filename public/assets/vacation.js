@@ -109,7 +109,7 @@
         return '<span class="status ' + esc(code) + '">' + esc(STATUS[code] || code) + '</span>';
     }
 
-    var TABS = ['calendar', 'requests', 'approve', 'settings', 'checks'];
+    var TABS = ['calendar', 'requests', 'approve', 'balances', 'settings', 'checks'];
 
     function openTab(tab) {
         if (TABS.indexOf(tab) < 0) {
@@ -124,6 +124,8 @@
         showMessage('');
         if (tab === 'calendar') {
             window.Kb24Calendar.show();
+        } else if (tab === 'balances') {
+            window.Kb24Balance.show();
         } else if (tab === 'requests') {
             loadMine();
         } else if (tab === 'approve') {
@@ -151,8 +153,21 @@
         BX24.fitWindow();
     }
 
+    // Подсказка в форме: сколько ежегодного отпуска доступно (если ОК внёс остаток)
+    function renderBalanceHint() {
+        var form = el('new-request');
+        var hint = el('balance-hint');
+        var b = state.balance;
+        hint.hidden = form.kind.value !== 'vacation';
+        hint.innerHTML = !b ? 'Праздничные дни в ежегодный отпуск не входят.'
+            : 'Доступно <b>' + esc(window.Kb24Balance.formatDays(b.available)) + ' дн.</b> ежегодного отпуска (остаток на '
+              + esc(formatDate(b.asOf)) + ' за вычетом поданных заявок). Праздничные дни в отпуск не входят.';
+    }
+
     function loadMine() {
         api('/api/requests/mine').then(function (data) {
+            state.balance = data.balance;
+            renderBalanceHint();
             return loadNames(data.items.map(function (r) { return r.approverId; })).then(function () {
                 fillRows('my-requests', data.items, function (r) {
                     return [esc(r.id), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status), esc(r.approverId ? name(r.approverId) : '')];
@@ -290,12 +305,14 @@
     function renderOptions() {
         el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
         el('see-other-departments').checked = !!(state.me.settings && state.me.settings.employees_see_other_departments);
+        el('annual-days').value = state.me.settings ? state.me.settings.annual_days : '';
     }
 
     function saveOptions() {
         api('/api/settings/options', {
             max_cancel_working_days: el('cancel-days').value,
-            employees_see_other_departments: el('see-other-departments').checked ? '1' : '0'
+            employees_see_other_departments: el('see-other-departments').checked ? '1' : '0',
+            annual_days: el('annual-days').value
         }).then(function (settings) {
             state.me.settings = settings;
             renderOptions();
@@ -365,6 +382,7 @@
         form.kind.innerHTML = Object.keys(state.me.kinds).map(function (code) {
             return '<option value="' + esc(code) + '">' + esc(state.me.kinds[code]) + '</option>';
         }).join('');
+        form.kind.addEventListener('change', renderBalanceHint);
         form.dateFrom.addEventListener('change', function () {
             if (!form.dateTo.value || form.dateTo.value < form.dateFrom.value) {
                 form.dateTo.value = form.dateFrom.value;
@@ -427,7 +445,17 @@
         api('/api/vacation').then(function (me) {
             state.me = me;
             document.querySelector('[data-tab="settings"]').hidden = !me.isAdmin;
+            document.querySelector('[data-tab="balances"]').hidden = !me.balances;
             bindForm();
+            window.Kb24Balance.init({
+                api: api,
+                esc: esc,
+                me: function () { return state.me; },
+                loadNames: loadNames,
+                name: name,
+                rememberName: function (id, text) { state.names[id] = text; },
+                showError: showError
+            });
             window.Kb24Calendar.init({
                 api: api,
                 esc: esc,

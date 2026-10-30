@@ -14,6 +14,7 @@ final class Schema
     public const HISTORY = 'kbhist';
     public const ROLES = 'kbrole';
     public const LIMITS = 'kblimit';
+    public const BALANCES = 'kbbal';
 
     /**
      * @return array<string, array{name: string, properties: array<string, array{name: string, type: string}>}>
@@ -68,6 +69,19 @@ final class Schema
                     'MAX_OVERLAP' => ['name' => 'Максимум дней пересечения двух отсутствий (пусто — без ограничения)', 'type' => 'S'],
                     'WITH_SUB' => ['name' => 'Учитывать подотделы (Y/N)', 'type' => 'S'],
                     'WITH_HEAD' => ['name' => 'Учитывать руководителя (Y/N)', 'type' => 'S'],
+                ],
+            ],
+            self::BALANCES => [
+                'name' => 'Отпуска: остатки и даты приёма',
+                'properties' => [
+                    'USER_ID' => ['name' => 'Сотрудник (ID)', 'type' => 'N'],
+                    'HIRE_DATE' => ['name' => 'Дата приёма, Y-m-d', 'type' => 'S'],
+                    // Строкой: пусто значит «остаток не внесён, ограничения нет», дробные дни без потери точности
+                    'DAYS' => ['name' => 'Остаток ежегодного отпуска, дн. (пусто — не внесён)', 'type' => 'S'],
+                    'AS_OF' => ['name' => 'Остаток на дату, Y-m-d', 'type' => 'S'],
+                    'COMMENT' => ['name' => 'Комментарий', 'type' => 'S'],
+                    'UPDATED_BY' => ['name' => 'Кто изменил (ID)', 'type' => 'N'],
+                    'UPDATED_AT' => ['name' => 'Когда изменил', 'type' => 'S'],
                 ],
             ],
         ];

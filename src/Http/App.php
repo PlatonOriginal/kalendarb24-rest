@@ -13,6 +13,7 @@ use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\BalanceService;
 use Kb24Rest\Vacation\CalendarService;
 use Kb24Rest\Vacation\Kinds;
 use Kb24Rest\Vacation\LimitService;
@@ -42,7 +43,7 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/requests/<id>         карточка заявки с историей и доступными действиями
  *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
  *   /api/settings/roles        (POST, администратор) директор и сотрудники ОК
- *   /api/settings/options      (POST max_cancel_working_days, employees_see_other_departments, администратор) настройки в app.option
+ *   /api/settings/options      (POST max_cancel_working_days, employees_see_other_departments, annual_days, администратор) настройки в app.option
  *   /api/requests/<id>/cancel (reason) | cancel-approve | cancel-refuse (reason)   (POST) отмена утверждённой заявки
  * Блок 4:
  *   уведомления о заявках уходят после ответа браузеру; ссылка из уведомления открывает /app
@@ -50,6 +51,11 @@ use Kb24Rest\Vacation\VacationError;
  * Блок 6:
  *   /api/calendar          (POST department, from, to) заявки отдела за период и дни, когда лимит исчерпан
  *   /api/settings/limits   (POST limits: JSON [{department, maxConcurrent, maxOverlap, withSub, withHead}], администратор)
+ * Блок 7:
+ *   /api/balances          остатки и даты приёма (ОК, директор, администратор); сотрудников и ФИО браузер берёт сам
+ *   /api/balances/save     (POST userId, days, asOf, comment, hireDate) остаток и дата приёма одного сотрудника (ОК, администратор)
+ *   /api/balances/import   (POST rows: JSON [{line, userId, hireDate, days, asOf, comment}]) загрузка из CSV (ОК, администратор)
+ *   /api/requests/mine     отдаёт ещё и мой остаток для подсказки в форме заявки
  */
 final class App
 {
@@ -72,6 +78,7 @@ final class App
         private readonly ?Settings $settings = null,
         private readonly ?CalendarService $calendar = null,
         private readonly ?LimitService $limits = null,
+        private readonly ?BalanceService $balances = null,
     ) {
     }
 
@@ -140,7 +147,20 @@ final class App
                 $path === '/api/storage/probe' && $this->isPost($server)
                     => $this->json($this->storageProbe($this->currentUser($server))),
                 $path === '/api/vacation' => $this->json($this->vacation($this->currentUser($server))),
-                $path === '/api/requests/mine' => $this->json(['items' => $this->requests->mine($this->currentUser($server))]),
+                $path === '/api/requests/mine' => $this->json($this->mine($this->currentUser($server))),
+                $path === '/api/balances' && $this->balances !== null => $this->json($this->balances->list($this->currentUser($server))),
+                $path === '/api/balances/save' && $this->isPost($server) && $this->balances !== null => $this->json($this->balances->save(
+                    $this->currentUser($server),
+                    (int)($post['userId'] ?? 0),
+                    (string)($post['days'] ?? ''),
+                    (string)($post['asOf'] ?? ''),
+                    (string)($post['comment'] ?? ''),
+                    isset($post['hireDate']) ? (string)$post['hireDate'] : null,
+                )),
+                $path === '/api/balances/import' && $this->isPost($server) && $this->balances !== null => $this->json($this->balances->import(
+                    $this->currentUser($server),
+                    array_values(array_filter((array)json_decode((string)($post['rows'] ?? ''), true), 'is_array')),
+                )),
                 $path === '/api/requests/approve' => $this->json(['items' => $this->requests->toApprove($this->currentUser($server))]),
                 $path === '/api/requests' && $this->isPost($server) => $this->json($this->requests->create(
                     $this->currentUser($server),
@@ -315,6 +335,14 @@ final class App
         return ['nodes' => $nodes];
     }
 
+    private function mine(CurrentUser $user): array
+    {
+        return [
+            'items' => $this->requests->mine($user),
+            'balance' => $this->balances?->get($user->portal, $user->userId),
+        ];
+    }
+
     private function vacation(CurrentUser $user): array
     {
         return [
@@ -327,6 +355,7 @@ final class App
             'settings' => $user->isAdmin ? ($this->settings?->all($user->portal) ?? Settings::DEFAULTS) : null,
             'limits' => $user->isAdmin && $this->limits !== null ? $this->limitsByDepartment($user) : null,
             'calendar' => $this->calendar?->departments($user),
+            'balances' => $this->balances !== null && $this->balances->canView($user),
         ];
     }
 
@@ -399,6 +428,15 @@ final class App
                 throw new VacationError('Укажите число рабочих дней от 0 до 365');
             }
             $this->settings->setMaxCancelWorkingDays($user->portal, (int)$value);
+        }
+        if (isset($post['annual_days']))
+        {
+            $value = trim((string)$post['annual_days']);
+            if (!preg_match('/^\d+$/', $value))
+            {
+                throw new VacationError('Ежегодный отпуск: от 28 до 100 календарных дней');
+            }
+            $this->settings->setAnnualDays($user->portal, (int)$value);
         }
         if (isset($post['employees_see_other_departments']))
         {

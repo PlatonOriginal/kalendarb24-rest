@@ -13,8 +13,11 @@ use Kb24Rest\Portal\Portal;
  */
 final class Settings
 {
-    /** Как в коробке: max_cancel_working_days по умолчанию 3, календарь других отделов сотрудникам не виден (0) */
-    public const DEFAULTS = ['max_cancel_working_days' => 3, 'employees_see_other_departments' => 0];
+    /**
+     * Как в коробке: max_cancel_working_days по умолчанию 3, календарь других отделов сотрудникам не виден (0),
+     * ежегодный отпуск 28 календарных дней за рабочий год.
+     */
+    public const DEFAULTS = ['max_cancel_working_days' => 3, 'employees_see_other_departments' => 0, 'annual_days' => 28];
 
     /** Настройки «да или нет»: хранятся как 0 и 1 */
     public const FLAGS = ['employees_see_other_departments'];
@@ -27,7 +30,7 @@ final class Settings
     }
 
     /**
-     * @return array{max_cancel_working_days: int, employees_see_other_departments: int}
+     * @return array{max_cancel_working_days: int, employees_see_other_departments: int, annual_days: int}
      */
     public function all(Portal $portal): array
     {
@@ -67,6 +70,24 @@ final class Settings
     public function setEmployeesSeeOtherDepartments(Portal $portal, bool $value): void
     {
         $this->rest->call($portal, 'app.option.set', ['options' => ['employees_see_other_departments' => $value ? 1 : 0]]);
+        unset($this->cache[$portal->memberId]);
+    }
+
+    /**
+     * Сколько календарных дней ежегодного отпуска начисляется в каждую годовщину приёма (от 28 до 100, как в коробке).
+     */
+    public function annualDays(Portal $portal): int
+    {
+        return min(100, max(28, $this->all($portal)['annual_days']));
+    }
+
+    public function setAnnualDays(Portal $portal, int $days): void
+    {
+        if ($days < 28 || $days > 100)
+        {
+            throw new VacationError('Ежегодный отпуск: от 28 до 100 календарных дней');
+        }
+        $this->rest->call($portal, 'app.option.set', ['options' => ['annual_days' => $days]]);
         unset($this->cache[$portal->memberId]);
     }
 

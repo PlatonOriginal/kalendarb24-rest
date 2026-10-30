@@ -107,3 +107,15 @@ button.danger { color: #ff5752; }
     .kb-view-month .kb-chip { font-size: 10px; }
     .kb-top { grid-template-columns: 1fr; }
 }
+
+/* Остатки отпуска */
+#balance-hint { width: 100%; margin: 0; }
+#tab-balances table { max-width: none; }
+.balances td { vertical-align: middle; padding: 6px 8px; }
+.balances input { width: 100%; min-width: 0; box-sizing: border-box; }
+.balances input.days { width: 80px; }
+.balances .num, .balances th.num { text-align: right; white-space: nowrap; }
+.balances td.hint { margin: 0; font-size: 12px; }
+.balances a { color: #2066b0; text-decoration: none; }
+#balances .kb-toolbar { margin-bottom: 12px; }
+.kb-toolbar .check { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; color: #525c69; }

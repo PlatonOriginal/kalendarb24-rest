@@ -12,6 +12,7 @@ use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 use Kb24Rest\Vacation\AbsenceCalendar;
+use Kb24Rest\Vacation\BalanceService;
 use Kb24Rest\Vacation\CalendarService;
 use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\Notifier;
@@ -41,6 +42,7 @@ final class RequestServiceTest extends TestCase
     private AbsenceCalendar $absence;
     private LimitService $limits;
     private CalendarService $calendar;
+    private BalanceService $balances;
     private Portal $portal;
 
     protected function setUp(): void
@@ -74,7 +76,8 @@ final class RequestServiceTest extends TestCase
         $settings = new Settings($rest);
         $this->limits = new LimitService($storage, $structure);
         $this->calendar = new CalendarService($structure, $this->roles, $this->limits, $settings);
-        $this->service = new RequestService($storage, $structure, $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence, $settings, $this->limits);
+        $this->balances = new BalanceService($storage, $this->roles, $settings, new \DateTimeImmutable('2026-10-27'));
+        $this->service = new RequestService($storage, $structure, $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), false, $this->notifier, $this->absence, $settings, $this->limits, $this->balances);
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -738,5 +741,110 @@ final class RequestServiceTest extends TestCase
 
         self::assertSame(5, $tree['myDepartment']);
         self::assertSame([[1, 0], [5, 1], [14, 1]], array_map(static fn(array $d) => [$d['id'], $d['depth']], $tree['departments']));
+    }
+
+    public function testWithoutBalanceThereIsNoRestriction(): void
+    {
+        self::assertNull($this->balances->get($this->portal, self::ACCOUNTANT));
+        self::assertSame(14, $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-12-31')['deptId']);
+    }
+
+    public function testRequestCannotExceedBalance(): void
+    {
+        $this->balances->save($this->user(40), self::ACCOUNTANT, '5', '2026-10-27');
+        $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+
+        try
+        {
+            $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-16', '2026-11-16');
+            self::fail('Остаток не проверен');
+        }
+        catch (VacationError $e)
+        {
+            self::assertSame('Недостаточно дней отпуска: в заявке 1 дн., к началу отпуска доступно 0 дн. (остаток 5 дн. на 27.10.2026, из них 5 дн. уже в других заявках)', $e->getMessage());
+        }
+        // Отпуск без сохранения остаток не тратит
+        self::assertSame('unpaid', $this->service->create($this->user(self::ACCOUNTANT), 'unpaid', '2026-11-16', '2026-11-16')['kind']);
+    }
+
+    public function testAnniversaryBeforeStartAddsAnnualDays(): void
+    {
+        $this->http->options = ['annual_days' => '30'];
+        $this->balances->save($this->user(40), self::ACCOUNTANT, '0', '27.10.2026', '', '01.12.2025');
+        $this->rebuild();
+
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-12-07', '2026-12-11');
+        self::assertSame(5, $request['days']);
+        $this->rebuild();
+
+        $this->expectExceptionMessage('к началу отпуска доступно 0 дн.');
+        $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-09');
+    }
+
+    public function testWithdrawnRequestReturnsDays(): void
+    {
+        $this->balances->save($this->user(40), self::ACCOUNTANT, '5', '');
+        $first = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->service->withdraw($this->user(self::ACCOUNTANT), $first['id']);
+        $this->rebuild();
+
+        self::assertSame(5.0, $this->balances->get($this->portal, self::ACCOUNTANT)['available']);
+    }
+
+    public function testOnlyHrAndAdminEditBalancesDirectorOnlyViews(): void
+    {
+        foreach ([self::ACCOUNTANT, self::DIRECTOR] as $userId)
+        {
+            try
+            {
+                $this->balances->save($this->user($userId), self::ACCOUNTANT, '5', '');
+                self::fail('Сохранил без права');
+            }
+            catch (VacationError)
+            {
+            }
+        }
+        $this->balances->save($this->user(1, true), self::ACCOUNTANT, '12,5', '2026-10-01', 'из 1С', '2020-03-15');
+
+        $list = $this->balances->list($this->user(self::DIRECTOR));
+        self::assertFalse($list['canEdit']);
+        self::assertSame(28, $list['annualDays']);
+        self::assertSame(self::ACCOUNTANT, $list['items'][0]['userId']);
+        self::assertSame('2020-03-15', $list['items'][0]['hireDate']);
+        self::assertSame(12.5, $list['items'][0]['balance']['days']);
+        self::assertSame('из 1С', $list['items'][0]['balance']['comment']);
+
+        $this->expectException(VacationError::class);
+        $this->balances->list($this->user(self::ACCOUNTANT));
+    }
+
+    public function testEmptyBalanceKeepsHireDateAndEmptyBothRemovesRecord(): void
+    {
+        $this->balances->save($this->user(40), self::ACCOUNTANT, '5', '', '', '2020-03-15');
+        $item = $this->balances->save($this->user(40), self::ACCOUNTANT, '', '');
+        self::assertNull($item['balance']);
+        self::assertSame('2020-03-15', $item['hireDate']);
+
+        $this->balances->save($this->user(40), self::ACCOUNTANT, '', '', '', '');
+        self::assertSame([], $this->http->items[Schema::BALANCES]);
+    }
+
+    public function testImportReportsBadLinesAndSavesTheRest(): void
+    {
+        $result = $this->balances->import($this->user(40), [
+            ['line' => 2, 'userId' => self::ACCOUNTANT, 'days' => '10', 'asOf' => '01.10.2026', 'hireDate' => '15.03.2020'],
+            ['line' => 3, 'userId' => 0, 'days' => '10'],
+            ['line' => 4, 'userId' => 100, 'days' => 'много'],
+            ['line' => 5, 'userId' => 200, 'days' => '3', 'hireDate' => '01.01.2030'],
+        ]);
+
+        self::assertSame(1, $result['saved']);
+        self::assertSame([
+            'Строка 3: сотрудник не найден',
+            'Строка 4: Остаток укажите числом дней от −365 до 365',
+            'Строка 5: Проверьте дату приёма на работу',
+        ], $result['errors']);
+        self::assertSame(10.0, $this->balances->get($this->portal, self::ACCOUNTANT)['days']);
     }
 }
