@@ -837,7 +837,7 @@ final class RequestService
         $step = $plan['steps'][$request['step']] ?? null;
 
         return $step !== null
-            ? RoutePlan::rejectBlocked($step + ['canReject' => true, 'rejectDays' => 0, 'name' => ''], new \DateTimeImmutable($request['dateFrom']), $this->today)
+            ? RoutePlan::rejectBlocked($step + ['rejectDays' => 0, 'name' => ''], new \DateTimeImmutable($request['dateFrom']), $this->today)
             : null;
     }
 
@@ -876,7 +876,6 @@ final class RequestService
                 'userId' => (int)($step['userId'] ?? 0),
                 'state' => $state,
                 'actorId' => $decided['actorId'] ?? ($state === 'current' ? $request['approverId'] : 0),
-                'canReject' => (bool)($step['canReject'] ?? true),
                 'rejectUntil' => $rejectDays > 0 ? (new \DateTimeImmutable($request['dateFrom']))->modify("-{$rejectDays} days")->format('Y-m-d') : '',
             ];
         }

@@ -159,7 +159,6 @@ final class RouteService
                 'name' => $name,
                 'kind' => $kind,
                 'userId' => $kind === self::KIND_USER ? $userId : 0,
-                'canReject' => self::flag($step['canReject'] ?? true),
                 'submitDays' => $submitDays,
                 'rejectDays' => $rejectDays,
                 'active' => self::flag($step['active'] ?? true),
