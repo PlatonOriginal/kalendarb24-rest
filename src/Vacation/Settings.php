@@ -21,7 +21,7 @@ final class Settings
         'max_cancel_working_days' => 3,
         'employees_see_other_departments' => 0,
         'annual_days' => 28,
-        // Цепочка по умолчанию: заявку подают не позже чем за столько дней до начала (в коробке по умолчанию 0)
+        // Прежний срок подачи для цепочки по умолчанию: теперь только начальное значение для маршрута «По умолчанию»
         'min_submit_days' => 0,
         // Срок подачи не действует на отпуск без сохранения заработной платы
         'min_submit_exempt_unpaid' => 0,
@@ -109,13 +109,12 @@ final class Settings
         return $this->all($portal)['min_submit_exempt_unpaid'] === 1;
     }
 
-    public function setMinSubmit(Portal $portal, int $days, bool $exemptUnpaid): void
+    /**
+     * Срок подачи теперь задаётся в шагах маршрутов, в том числе «По умолчанию»; здесь только освобождение от него.
+     */
+    public function setMinSubmitExemptUnpaid(Portal $portal, bool $exemptUnpaid): void
     {
-        if ($days < 0 || $days > 365)
-        {
-            throw new VacationError('Срок подачи: от 0 до 365 дней');
-        }
-        $this->rest->call($portal, 'app.option.set', ['options' => ['min_submit_days' => $days, 'min_submit_exempt_unpaid' => $exemptUnpaid ? 1 : 0]]);
+        $this->rest->call($portal, 'app.option.set', ['options' => ['min_submit_exempt_unpaid' => $exemptUnpaid ? 1 : 0]]);
         unset($this->cache[$portal->memberId]);
     }
 

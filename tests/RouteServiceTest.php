@@ -17,6 +17,7 @@ use Kb24Rest\Vacation\RoleService;
 use Kb24Rest\Vacation\RouteService;
 use Kb24Rest\Vacation\Settings;
 use Kb24Rest\Vacation\VacationError;
+use Kb24Rest\Vacation\WatchService;
 use Kb24Rest\Vacation\WorkCalendar;
 use PHPUnit\Framework\TestCase;
 
@@ -37,7 +38,10 @@ final class RouteServiceTest extends TestCase
     private RouteService $routes;
     private RequestService $service;
     private Notifier $notifier;
+    private WatchService $watch;
     private Portal $portal;
+    /** «Сегодня» для напоминаний: меняется в тестах напоминаний */
+    private string $today = '2026-10-27';
 
     protected function setUp(): void
     {
@@ -65,9 +69,10 @@ final class RouteServiceTest extends TestCase
         $this->roles = new RoleService($storage);
         $this->notifier = new Notifier($rest, 'local.app.code');
         $this->routes = new RouteService($storage, $this->roles, $structure, $settings);
+        $this->watch = new WatchService($storage, $rest, $this->notifier, new \DateTimeImmutable($this->today));
         $this->service = new RequestService(
             $storage, $structure, $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), $allowSelfApproval,
-            $this->notifier, null, $settings, null, null, $this->routes,
+            $this->notifier, null, $settings, null, null, $this->routes, $this->watch,
         );
     }
 
@@ -153,13 +158,50 @@ final class RouteServiceTest extends TestCase
         $this->saveRoute(['name' => 'Второй учебный', 'exclusive' => true, 'kinds' => ['study', 'unpaid'], 'steps' => [$this->step('ОК', 'hr')]]);
     }
 
-    public function testWithoutRouteDefaultChainWorks(): void
+    public function testWithoutMatchingRouteDefaultRouteWorks(): void
     {
         $this->saveRoute(['departmentIds' => [5], 'steps' => [$this->step('Директор', 'director')]]);
 
         $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        self::assertSame([Status::ROUTE_REVIEW, 'Руководитель', self::ACCOUNTING_HEAD], [$request['status'], $request['stepName'], $request['approverId']]);
 
-        self::assertSame(Status::HEAD_REVIEW, $request['status']);
+        // Как прежняя цепочка: руководитель, один сотрудник ОК, директор
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        self::assertSame('Отдел кадров', $request['stepName']);
+        self::assertContains($request['approverId'], [40, 41]);
+        $request = $this->approve($request['approverId'], $request['id']);
+        self::assertSame([self::DIRECTOR, 'Директор'], [$request['approverId'], $request['stepName']]);
+        self::assertSame(Status::APPROVED, $this->approve(self::DIRECTOR, $request['id'])['status']);
+    }
+
+    public function testDefaultRouteSkipsDirectorWhoApprovedAsHeadAndSecondHr(): void
+    {
+        // В продажах нет руководителя: шаг руководителя у директора, третий шаг пропускается
+        $request = $this->service->create($this->user(self::SALES_MANAGER), 'vacation', '2026-11-09', '2026-11-13');
+        $request = $this->approve(self::DIRECTOR, $request['id']);
+        $request = $this->approve($request['approverId'], $request['id']);
+        self::assertSame(Status::APPROVED, $request['status']);
+
+        // Директор подаёт сам: руководителя нет, шаг уходит в ОК, и второй раз ОК не спрашивают
+        $own = $this->service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-16', '2026-11-20');
+        self::assertContains($own['approverId'], [40, 41]);
+        self::assertSame(Status::APPROVED, $this->approve($own['approverId'], $own['id'])['status']);
+    }
+
+    public function testDefaultRouteIsEditableButNotRemovable(): void
+    {
+        $default = $this->routes->all($this->portal)[0];
+        self::assertTrue($default['isDefault']);
+        $default['steps'][0]['submitDays'] = 3;
+        $default['kinds'] = ['study'];
+        $this->saveRoute($default);
+
+        $saved = $this->routes->all($this->portal)[0];
+        self::assertSame([true, [], 3], [$saved['isDefault'], $saved['kinds'], $saved['steps'][0]['submitDays']]);
+        self::assertCount(1, $this->routes->all($this->portal));
+
+        $this->expectExceptionMessage('Маршрут «По умолчанию» удалить нельзя');
+        $this->routes->delete($this->admin(), $saved['id']);
     }
 
     public function testSubmitDeadlineComesFromRouteOrSettings(): void
@@ -186,9 +228,9 @@ final class RouteServiceTest extends TestCase
         }
         catch (VacationError $e)
         {
-            self::assertSame('Заявку нужно подать не позже чем за 7 дн. до начала', $e->getMessage());
+            self::assertSame('По маршруту «По умолчанию» заявку нужно подать не позже чем за 7 дн. до начала', $e->getMessage());
         }
-        self::assertSame(Status::HEAD_REVIEW, $this->service->create($this->user(self::SALES_MANAGER), 'unpaid', '2026-10-30', '2026-10-30')['status']);
+        self::assertSame(Status::ROUTE_REVIEW, $this->service->create($this->user(self::SALES_MANAGER), 'unpaid', '2026-10-30', '2026-10-30')['status']);
     }
 
     public function testAuthorAndThoseWhoApprovedAreSkipped(): void
@@ -276,7 +318,7 @@ final class RouteServiceTest extends TestCase
         ]]);
         $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
 
-        $route = $this->routes->all($this->portal)[0];
+        $route = $this->routes->all($this->portal)[1];
         $route['steps'][1]['active'] = false;
         $this->saveRoute(['id' => $routeId] + $route);
 
@@ -327,11 +369,139 @@ final class RouteServiceTest extends TestCase
     public function testStepIdsStayStableWhenStepsMove(): void
     {
         $routeId = $this->saveRoute(['steps' => [$this->step('А', 'director'), $this->step('Б', 'hr')]]);
-        $steps = $this->routes->all($this->portal)[0]['steps'];
+        $steps = $this->routes->all($this->portal)[1]['steps'];
 
         $this->saveRoute(['id' => $routeId, 'steps' => [$steps[1], $this->step('В', 'head'), $steps[0]]]);
 
-        $ids = array_column($this->routes->all($this->portal)[0]['steps'], 'id', 'name');
+        $ids = array_column($this->routes->all($this->portal)[1]['steps'], 'id', 'name');
         self::assertSame(['Б' => $steps[1]['id'], 'В' => 3, 'А' => $steps[0]['id']], $ids);
+    }
+
+    /**
+     * Маршрут: руководитель и директор; уведомить юриста (сразу задача, за 3 дня) и ОК (спросить про задачу, за 5 дней).
+     */
+    private function approvedWithWatchers(array $watchers = []): array
+    {
+        $this->saveRoute(['steps' => [$this->step('Руководитель', 'head'), $this->step('Директор', 'director')], 'watchers' => $watchers ?: [
+            ['kind' => 'user', 'userId' => self::LAWYER, 'events' => ['approved', 'cancelled'], 'task' => 'auto', 'taskDays' => 3],
+            ['kind' => 'hr', 'events' => ['approved'], 'task' => 'ask', 'taskDays' => 5],
+            // Автора не уведомляем, даже если он попал в список
+            ['kind' => 'user', 'userId' => self::ACCOUNTANT, 'events' => ['approved'], 'task' => 'none'],
+        ]]);
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+
+        return $this->approve(self::DIRECTOR, $request['id']);
+    }
+
+    public function testWatchersAreNotifiedAndAutoTaskIsCreatedAfterResponse(): void
+    {
+        $request = $this->approvedWithWatchers();
+        self::assertSame(Status::APPROVED, $request['status']);
+
+        $watch = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'watch'));
+        self::assertSame([[self::LAWYER], [40]], array_column($watch, 'to'));
+        self::assertSame(['approved', 'approved'], array_column($watch, 'reason'));
+
+        self::assertSame([], $this->http->tasks, 'задачу ставим после ответа браузеру');
+        $this->watch->run();
+        self::assertCount(1, $this->http->tasks);
+        $task = $this->http->tasks[0];
+        self::assertSame([self::LAWYER, self::ACCOUNTANT, '2026-11-06T18:00:00'], [$task['RESPONSIBLE_ID'], $task['CREATED_BY'], $task['DEADLINE']]);
+        self::assertSame('Отпуск: Фамилия31 Имя31, 09.11.2026–13.11.2026, ежегодный оплачиваемый отпуск', $task['TITLE']);
+
+        $card = $this->service->card($this->user(self::LAWYER), $request['id']);
+        self::assertSame(5001, $card['myAck']['taskId']);
+        self::assertSame([self::LAWYER, 40], array_column($card['acks'], 'userId'));
+    }
+
+    public function testAcknowledgeWithOptionalTask(): void
+    {
+        $request = $this->approvedWithWatchers();
+        $this->rebuild();
+        $card = $this->service->card($this->user(40), $request['id']);
+        self::assertSame(['ask', '2026-11-04'], [$card['myAck']['taskMode'], $card['myAck']['deadline']]);
+        self::assertCount(1, $this->service->toAcknowledge($this->user(40)));
+
+        try
+        {
+            $this->service->acknowledge($this->user(40), $request['id'], true, '2026-10-01');
+            self::fail('Срок в прошлом принят');
+        }
+        catch (VacationError $e)
+        {
+            self::assertSame('Срок задачи: укажите дату не раньше сегодняшней', $e->getMessage());
+        }
+        $this->service->acknowledge($this->user(40), $request['id'], true, '2026-11-02');
+
+        self::assertSame([40, '2026-11-02T18:00:00'], [$this->http->tasks[0]['RESPONSIBLE_ID'], $this->http->tasks[0]['DEADLINE']]);
+        $card = $this->service->card($this->user(40), $request['id']);
+        self::assertNull($card['myAck']);
+        self::assertSame([], $this->service->toAcknowledge($this->user(40)));
+        $this->expectExceptionMessage('Подтверждать ознакомление по этой заявке не нужно');
+        $this->service->acknowledge($this->user(40), $request['id'], false, '');
+    }
+
+    public function testTaskRefusalKeepsAcknowledgementPending(): void
+    {
+        $request = $this->approvedWithWatchers();
+        $this->http->taskError = ['error' => 'insufficient_scope', 'error_description' => 'нет права task'];
+        $this->rebuild();
+        try
+        {
+            $this->service->acknowledge($this->user(40), $request['id'], true, '2026-11-02');
+            self::fail('Ошибка портала не показана');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringStartsWith('Не удалось поставить задачу', $e->getMessage());
+        }
+        self::assertNotNull($this->service->card($this->user(40), $request['id'])['myAck']);
+        // Без задачи ознакомиться можно
+        $this->service->acknowledge($this->user(40), $request['id'], false, '');
+        self::assertNull($this->service->card($this->user(40), $request['id'])['myAck']);
+    }
+
+    public function testRemindersOnWorkingDaysBeforeStartUntilAcknowledged(): void
+    {
+        $request = $this->approvedWithWatchers();
+        $this->watch->run();
+        $this->rebuild();
+        $this->service->acknowledge($this->user(self::LAWYER), $request['id'], false, '');
+
+        $remind = function (string $day, bool $working = true): array {
+            $this->today = $day;
+            $this->rebuild();
+            $this->watch->remind($this->portal, $working);
+
+            return array_column(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'remind'), 'to');
+        };
+        self::assertSame([], $remind('2026-10-27'), 'в день уведомления не напоминаем');
+        self::assertSame([[40]], $remind('2026-10-28'));
+        self::assertSame([], $remind('2026-10-28'), 'повторный запуск в тот же день');
+        self::assertSame([], $remind('2026-10-31', false), 'выходной');
+        self::assertSame([], $remind('2026-11-09'), 'отсутствие уже началось');
+    }
+
+    public function testCancellationNotifiesItsWatchers(): void
+    {
+        $request = $this->approvedWithWatchers();
+        $this->rebuild();
+        $request = $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Перенос');
+        $this->rebuild();
+        $request = $this->service->approveCancellation($this->user($request['approverId']), $request['id']);
+        $this->rebuild();
+        $this->service->approveCancellation($this->user($request['approverId']), $request['id']);
+
+        $watch = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'watch'));
+        self::assertSame([[[self::LAWYER]], ['cancelled']], [array_column($watch, 'to'), array_column($watch, 'reason')]);
+        $this->watch->run();
+        self::assertStringStartsWith('Отмена отпуска: ', $this->http->tasks[0]['TITLE']);
+    }
+
+    public function testWatchersAreValidated(): void
+    {
+        $this->expectExceptionMessage('Уведомление 1: выберите, о чём уведомлять');
+        $this->saveRoute(['steps' => [$this->step('Директор', 'director')], 'watchers' => [['kind' => 'hr', 'events' => []]]]);
     }
 }

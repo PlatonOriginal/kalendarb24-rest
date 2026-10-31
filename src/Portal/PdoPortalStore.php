@@ -62,4 +62,9 @@ final class PdoPortalStore implements PortalStore
     {
         $this->pdo->prepare('UPDATE portal SET storage_version = ? WHERE member_id = ?')->execute([$version, $memberId]);
     }
+
+    public function memberIds(): array
+    {
+        return array_map('strval', $this->pdo->query('SELECT member_id FROM portal ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
+    }
 }

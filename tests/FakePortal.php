@@ -17,6 +17,12 @@ final class FakePortal implements HttpTransport
     /** @var list<string> вызванные методы */
     public array $calls = [];
 
+    /** @var list<array<string, mixed>> поля поставленных задач */
+    public array $tasks = [];
+
+    /** Ответ портала на tasks.task.add с ошибкой, например нет права task */
+    public ?array $taskError = null;
+
     /** @var list<array<string, mixed>> параметры уведомлений, пришедших в batch */
     public array $notifications = [];
 
@@ -114,6 +120,7 @@ final class FakePortal implements HttpTransport
             'lists.element.add' => $this->chartError ?? ['result' => 3000 + array_push($this->chartEntries, $params)],
             'lists.element.delete' => ['result' => (bool)array_push($this->deletedChartEntries, (int)$params['ELEMENT_ID'])],
             'calendar.settings.get' => ['result' => $this->calendarSettings],
+            'tasks.task.add' => $this->taskError ?? ['result' => ['task' => ['id' => (string)(5000 + array_push($this->tasks, (array)$params['fields']))]]],
             'entity.item.add' => ['result' => $this->add($entity, $params)],
             'entity.item.update' => ['result' => $this->update($entity, (int)$params['ID'], (array)($params['PROPERTY_VALUES'] ?? []))],
             'entity.item.delete' => ['result' => $this->delete($entity, (int)$params['ID'])],

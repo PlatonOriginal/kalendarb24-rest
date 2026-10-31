@@ -62,6 +62,8 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/routes/save       (POST route: JSON {id, name, active, exclusive, kinds, departmentIds, steps}) сохранить маршрут
  *   /api/routes/delete     (POST id) удалить маршрут
  *   /api/routes/editors    (POST ids: через запятую) кто ещё настраивает маршруты
+ *   /api/requests/<id>/acknowledge  (POST task: 1, deadline: Y-m-d) ознакомился с результатом, по желанию поставить себе задачу
+ *   /api/requests/approve  отдаёт ещё и acks: заявки, с результатом которых нужно ознакомиться
  */
 final class App
 {
@@ -168,7 +170,7 @@ final class App
                     $this->currentUser($server),
                     array_values(array_filter((array)json_decode((string)($post['rows'] ?? ''), true), 'is_array')),
                 )),
-                $path === '/api/requests/approve' => $this->json(['items' => $this->requests->toApprove($this->currentUser($server))]),
+                $path === '/api/requests/approve' => $this->json($this->toApprove($this->currentUser($server))),
                 $path === '/api/requests' && $this->isPost($server) => $this->json($this->requests->create(
                     $this->currentUser($server),
                     (string)($post['kind'] ?? ''),
@@ -176,7 +178,7 @@ final class App
                     (string)($post['dateTo'] ?? ''),
                 )),
                 (bool)preg_match('~^/api/requests/(\d+)$~', $path, $m) => $this->json($this->requests->card($this->currentUser($server), (int)$m[1])),
-                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse|calendar-retry)$~', $path, $m) && $this->isPost($server)
+                (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse|calendar-retry|acknowledge)$~', $path, $m) && $this->isPost($server)
                     => $this->json($this->decide($this->currentUser($server), (int)$m[1], $m[2], $post)),
                 $path === '/api/settings/roles' && $this->isPost($server) => $this->json($this->saveRoles($this->currentAdmin($server), $post)),
                 $path === '/api/settings/options' && $this->isPost($server) => $this->json($this->saveOptions($this->currentAdmin($server), $post)),
@@ -457,14 +459,9 @@ final class App
             }
             $this->settings->setAnnualDays($user->portal, (int)$value);
         }
-        if (isset($post['min_submit_days']))
+        if (isset($post['min_submit_exempt_unpaid']))
         {
-            $value = trim((string)$post['min_submit_days']);
-            if (!preg_match('/^\d+$/', $value))
-            {
-                throw new VacationError('Срок подачи: от 0 до 365 дней');
-            }
-            $this->settings->setMinSubmit($user->portal, (int)$value, ($post['min_submit_exempt_unpaid'] ?? '0') === '1');
+            $this->settings->setMinSubmitExemptUnpaid($user->portal, $post['min_submit_exempt_unpaid'] === '1');
         }
         if (isset($post['employees_see_other_departments']))
         {
@@ -472,6 +469,11 @@ final class App
         }
 
         return $this->settings->all($user->portal);
+    }
+
+    private function toApprove(CurrentUser $user): array
+    {
+        return ['items' => $this->requests->toApprove($user), 'acks' => $this->requests->toAcknowledge($user)];
     }
 
     private function decide(CurrentUser $user, int $id, string $action, array $post): array
@@ -485,6 +487,7 @@ final class App
             'cancel-approve' => $this->requests->approveCancellation($user, $id),
             'cancel-refuse' => $this->requests->refuseCancellation($user, $id, (string)($post['reason'] ?? '')),
             'calendar-retry' => $this->requests->retryCalendar($user, $id),
+            'acknowledge' => $this->requests->acknowledge($user, $id, ($post['task'] ?? '') === '1', (string)($post['deadline'] ?? '')),
         };
     }
 

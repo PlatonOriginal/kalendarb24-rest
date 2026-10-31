@@ -11,8 +11,11 @@ use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 
 /**
- * Настраиваемые маршруты согласования, как в коробке. Если ни один маршрут не подходит, работает цепочка
- * по умолчанию: руководитель → отдел кадров → директор.
+ * Настраиваемые маршруты согласования, как в коробке. Если ни один маршрут не подходит, работает маршрут
+ * «По умолчанию» (руководитель → отдел кадров → директор). Он настраивается так же, как остальные, только
+ * действует на все виды и отделы, его нельзя выключить или удалить. Пока его не сохраняли, он не хранится в портале.
+ * У маршрута есть список «Уведомить о результате»: кому сообщить об утверждении или отмене отсутствия,
+ * с подтверждением ознакомления и, если нужно, задачей.
  * Маршрут — одна запись kbroute, шаги в ней одним JSON (в коробке это две таблицы). У шага постоянный id
  * внутри маршрута: по нему уже поданные заявки узнают, что шаг выключили.
  */
@@ -23,6 +26,11 @@ final class RouteService
     public const KIND_HR = 'hr';
     public const KIND_DIRECTOR = 'director';
     public const KINDS = [self::KIND_HEAD, self::KIND_USER, self::KIND_HR, self::KIND_DIRECTOR];
+    /** О чём уведомлять: отсутствие утверждено, утверждённое отсутствие отменено */
+    public const EVENTS = ['approved', 'cancelled'];
+    /** Задача получателю уведомления: не ставить, ставить сразу, спросить при ознакомлении */
+    public const TASK_MODES = ['none', 'auto', 'ask'];
+    public const MAX_WATCHERS = 10;
 
     /** @var array<string, list<array<string, mixed>>> маршруты за время одного запроса */
     private array $cache = [];
@@ -61,23 +69,51 @@ final class RouteService
             // Все отделы: тот, кто настраивает маршруты, видит их независимо от доступа к календарю
             'departments' => $departments,
             'editorIds' => $this->roles->roles($user->portal)['routeEditors'],
-            'defaultMinDays' => $this->settings?->minSubmitDays($user->portal) ?? Settings::DEFAULTS['min_submit_days'],
         ];
     }
 
     /**
-     * @return list<array{id: int, name: string, active: bool, exclusive: bool, kinds: list<string>, departmentIds: list<int>, sort: int, steps: list<array<string, mixed>>, updatedBy: int, updatedAt: string}>
+     * Маршрут «По умолчанию» первым, за ним остальные по сортировке.
+     *
+     * @return list<array{id: int, isDefault: bool, name: string, active: bool, exclusive: bool, kinds: list<string>, departmentIds: list<int>, sort: int, steps: list<array<string, mixed>>, watchers: list<array<string, mixed>>, updatedBy: int, updatedAt: string}>
      */
     public function all(Portal $portal): array
     {
         if (!isset($this->cache[$portal->memberId]))
         {
             $routes = array_map(self::toRoute(...), $this->storage->find($portal, Schema::ROUTES));
-            usort($routes, static fn(array $a, array $b) => [$a['sort'], $a['id']] <=> [$b['sort'], $b['id']]);
+            usort($routes, static fn(array $a, array $b) => [!$a['isDefault'], $a['sort'], $a['id']] <=> [!$b['isDefault'], $b['sort'], $b['id']]);
+            if (!$routes || !$routes[0]['isDefault'])
+            {
+                array_unshift($routes, $this->builtInDefault($portal));
+            }
             $this->cache[$portal->memberId] = $routes;
         }
 
         return $this->cache[$portal->memberId];
+    }
+
+    /**
+     * Маршрут «По умолчанию», пока его не сохраняли: цепочка руководитель → ОК → директор, как в коробке.
+     * Срок подачи берётся из прежней настройки min_submit_days, чтобы не потерять её.
+     */
+    private function builtInDefault(Portal $portal): array
+    {
+        $step = static fn(int $id, string $name, string $kind) => [
+            'id' => $id, 'name' => $name, 'kind' => $kind, 'userId' => 0, 'submitDays' => 0, 'rejectDays' => 0, 'active' => true,
+        ];
+        $steps = [$step(1, 'Руководитель', self::KIND_HEAD), $step(2, 'Отдел кадров', self::KIND_HR), $step(3, 'Директор', self::KIND_DIRECTOR)];
+        $steps[0]['submitDays'] = $this->settings?->minSubmitDays($portal) ?? 0;
+
+        return [
+            'id' => 0, 'isDefault' => true, 'name' => 'По умолчанию', 'active' => true, 'exclusive' => false, 'kinds' => [], 'departmentIds' => [],
+            'sort' => 0, 'steps' => $steps, 'watchers' => [], 'updatedBy' => 0, 'updatedAt' => '',
+        ];
+    }
+
+    public function defaultRoute(Portal $portal): array
+    {
+        return $this->all($portal)[0];
     }
 
     /**
@@ -88,26 +124,29 @@ final class RouteService
         $this->assertEditor($user);
         $portal = $user->portal;
         $routeId = (int)($data['id'] ?? 0);
+        $isDefault = self::flag($data['isDefault'] ?? false);
         $existing = null;
         foreach ($this->all($portal) as $route)
         {
-            if ($route['id'] === $routeId)
+            if ($isDefault ? $route['isDefault'] : $route['id'] === $routeId && !$route['isDefault'])
             {
                 $existing = $route;
             }
         }
-        if ($routeId > 0 && $existing === null)
+        if (!$isDefault && $routeId > 0 && $existing === null)
         {
             throw new VacationError('Маршрут не найден');
         }
+        $routeId = $existing['id'] ?? 0;
 
         $route = [
             'id' => $routeId,
             'name' => mb_substr(trim((string)($data['name'] ?? '')), 0, 100),
-            'active' => self::flag($data['active'] ?? true),
-            'exclusive' => self::flag($data['exclusive'] ?? false),
-            'kinds' => array_values(array_intersect(array_keys(Kinds::all()), array_map('strval', (array)($data['kinds'] ?? [])))),
-            'departmentIds' => self::ids($data['departmentIds'] ?? []),
+            // «По умолчанию» действует всегда, на все виды и отделы
+            'active' => $isDefault || self::flag($data['active'] ?? true),
+            'exclusive' => !$isDefault && self::flag($data['exclusive'] ?? false),
+            'kinds' => $isDefault ? [] : array_values(array_intersect(array_keys(Kinds::all()), array_map('strval', (array)($data['kinds'] ?? [])))),
+            'departmentIds' => $isDefault ? [] : self::ids($data['departmentIds'] ?? []),
         ];
         if ($route['name'] === '')
         {
@@ -168,6 +207,7 @@ final class RouteService
         {
             throw new VacationError('В маршруте от 1 до ' . RoutePlan::MAX_STEPS . ' шагов');
         }
+        $watchers = $this->watchers((array)($data['watchers'] ?? []));
 
         $conflict = $this->exclusiveConflict($portal, $route);
         if ($conflict !== null)
@@ -177,12 +217,14 @@ final class RouteService
 
         $values = [
             'ROUTE_NAME' => $route['name'],
+            'IS_DEFAULT' => $isDefault ? 'Y' : 'N',
             'ACTIVE' => $route['active'] ? 'Y' : 'N',
             'EXCLUSIVE' => $route['exclusive'] ? 'Y' : 'N',
             'KINDS' => implode(',', $route['kinds']),
             'DEPTS' => implode(',', $route['departmentIds']),
             'SORT' => 100,
             'STEPS' => json_encode($steps, JSON_UNESCAPED_UNICODE),
+            'WATCHERS' => json_encode($watchers, JSON_UNESCAPED_UNICODE),
             'UPDATED_BY' => $user->userId,
             'UPDATED_AT' => (new \DateTimeImmutable())->format('Y-m-d H:i'),
         ];
@@ -205,9 +247,14 @@ final class RouteService
     public function delete(CurrentUser $user, int $routeId): array
     {
         $this->assertEditor($user);
-        if (!in_array($routeId, array_column($this->all($user->portal), 'id'), true))
+        $found = array_values(array_filter($this->all($user->portal), static fn(array $route) => $route['id'] === $routeId && $routeId > 0));
+        if (!$found)
         {
             throw new VacationError('Маршрут не найден');
+        }
+        if ($found[0]['isDefault'])
+        {
+            throw new VacationError('Маршрут «По умолчанию» удалить нельзя: он действует, когда не подошёл ни один другой');
         }
         $this->storage->delete($user->portal, Schema::ROUTES, $routeId);
         unset($this->cache[$user->portal->memberId]);
@@ -233,20 +280,18 @@ final class RouteService
     }
 
     /**
-     * Маршрут для заявки: снимок для kbreq.ROUTE_DATA или null, если работает цепочка по умолчанию.
+     * Маршрут для заявки, снимок для kbreq.ROUTE_DATA: самый точный из настроенных, иначе «По умолчанию».
+     * null — у маршрута все шаги выключены.
      *
-     * @return array{id: int, name: string, steps: list<array<string, mixed>>}|null
+     * @return array{id: int, name: string, steps: list<array<string, mixed>>, watchers: list<array<string, mixed>>}|null
      */
     public function findFor(Portal $portal, int $departmentId, string $kind): ?array
     {
-        $route = RoutePlan::pick($this->all($portal), $kind, $this->departmentChain($portal, $departmentId));
-        if ($route === null)
-        {
-            return null;
-        }
+        $routes = $this->all($portal);
+        $route = RoutePlan::pick(array_slice($routes, 1), $kind, $this->departmentChain($portal, $departmentId)) ?? $routes[0];
         $steps = array_values(array_filter($route['steps'], static fn(array $step) => $step['active']));
 
-        return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps] : null;
+        return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers']] : null;
     }
 
     /**
@@ -265,6 +310,58 @@ final class RouteService
         }
 
         return [];
+    }
+
+    /**
+     * Кого уведомить о результате: роль или сотрудник, о каких событиях, задача и её срок.
+     *
+     * @return list<array{kind: string, userId: int, events: list<string>, task: string, taskDays: int}>
+     */
+    private function watchers(array $rows): array
+    {
+        if (count($rows) > self::MAX_WATCHERS)
+        {
+            throw new VacationError('Уведомить о результате можно не больше ' . self::MAX_WATCHERS . ' получателей');
+        }
+        $watchers = [];
+        foreach (array_values($rows) as $number => $row)
+        {
+            $label = 'Уведомление ' . ($number + 1) . ': ';
+            $kind = (string)($row['kind'] ?? '');
+            $userId = (int)($row['userId'] ?? 0);
+            $events = array_values(array_intersect(self::EVENTS, array_map('strval', (array)($row['events'] ?? []))));
+            $task = (string)($row['task'] ?? 'none');
+            $taskDays = (int)($row['taskDays'] ?? 0);
+            if (!in_array($kind, self::KINDS, true))
+            {
+                throw new VacationError($label . 'выберите, кого уведомить');
+            }
+            if ($kind === self::KIND_USER && $userId <= 0)
+            {
+                throw new VacationError($label . 'выберите сотрудника');
+            }
+            if (!$events)
+            {
+                throw new VacationError($label . 'выберите, о чём уведомлять');
+            }
+            if (!in_array($task, self::TASK_MODES, true))
+            {
+                throw new VacationError($label . 'выберите, ставить ли задачу');
+            }
+            if ($taskDays < 0 || $taskDays > 365)
+            {
+                throw new VacationError($label . 'срок задачи указывается в днях от 0 до 365');
+            }
+            $watchers[] = [
+                'kind' => $kind,
+                'userId' => $kind === self::KIND_USER ? $userId : 0,
+                'events' => $events,
+                'task' => $task,
+                'taskDays' => $task === 'none' ? 0 : $taskDays,
+            ];
+        }
+
+        return $watchers;
     }
 
     private function assertEditor(CurrentUser $user): void
@@ -322,9 +419,11 @@ final class RouteService
     {
         $values = $item['PROPERTY_VALUES'] ?? [];
         $steps = json_decode((string)($values['STEPS'] ?? ''), true);
+        $watchers = json_decode((string)($values['WATCHERS'] ?? ''), true);
 
         return [
             'id' => (int)$item['ID'],
+            'isDefault' => ($values['IS_DEFAULT'] ?? '') === 'Y',
             'name' => (string)($values['ROUTE_NAME'] ?? ''),
             'active' => ($values['ACTIVE'] ?? '') === 'Y',
             'exclusive' => ($values['EXCLUSIVE'] ?? '') === 'Y',
@@ -332,6 +431,7 @@ final class RouteService
             'departmentIds' => self::ids(explode(',', (string)($values['DEPTS'] ?? ''))),
             'sort' => (int)($values['SORT'] ?? 100),
             'steps' => is_array($steps) ? array_values($steps) : [],
+            'watchers' => is_array($watchers) ? array_values($watchers) : [],
             'updatedBy' => (int)($values['UPDATED_BY'] ?? 0),
             'updatedAt' => (string)($values['UPDATED_AT'] ?? ''),
         ];

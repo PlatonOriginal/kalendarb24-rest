@@ -20,6 +20,7 @@ use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
 use Kb24Rest\Vacation\RouteService;
 use Kb24Rest\Vacation\Settings;
+use Kb24Rest\Vacation\WatchService;
 use Kb24Rest\Vacation\WorkCalendar;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
@@ -43,8 +44,9 @@ $settings = new Settings($rest);
 $limits = new LimitService($storage, $structure);
 $balances = new BalanceService($storage, $roles, $settings);
 $routes = new RouteService($storage, $roles, $structure, $settings);
-$requests = new RequestService($storage, $structure, $roles, new WorkCalendar($rest), new DateTimeImmutable('today'), $config->allowSelfApproval, $notifier, $absence, $settings, $limits, $balances, $routes);
+$watch = new WatchService($storage, $rest, $notifier);
+$requests = new RequestService($storage, $structure, $roles, new WorkCalendar($rest), new DateTimeImmutable('today'), $config->allowSelfApproval, $notifier, $absence, $settings, $limits, $balances, $routes, $watch);
 $calendar = new CalendarService($structure, $roles, $limits, $settings);
 
-$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $notifier], $settings, $calendar, $limits, $balances, $routes);
+$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $watch, $notifier], $settings, $calendar, $limits, $balances, $routes);
 $app->handle(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', $_POST, $_SERVER);

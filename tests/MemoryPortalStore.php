@@ -35,4 +35,9 @@ final class MemoryPortalStore implements PortalStore
     {
         $this->storageVersions[$memberId] = $version;
     }
+
+    public function memberIds(): array
+    {
+        return array_keys($this->portals);
+    }
 }
