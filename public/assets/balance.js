@@ -116,7 +116,7 @@ window.Kb24Balance = (function () {
             + 'В каждую годовщину приёма после даты остатка добавляется ' + esc(view.annualDays) + ' дн. (норма в настройках). '
             + 'Заявки с началом в дату остатка или позже его уменьшают, считаются и утверждённые, и ещё не согласованные. Праздники в отпуск не входят. '
             + 'Подать заявку больше доступного к началу отпуска нельзя; если остаток не указан, ограничения нет. '
-            + (view.canEdit ? 'В CSV разделитель «;», даты в виде 31.12.2026; сотрудник ищется по ID, а без него по ФИО.' : 'Править данные может только отдел кадров.') + '</p>'
+            + (view.canEdit ? 'CSV можно сохранять из Excel или Calc с любым разделителем («;», «,», табуляция), даты в виде 31.12.2026 или 31.12.26; сотрудник ищется по ID, а без него по ФИО.' : 'Править данные может только отдел кадров.') + '</p>'
             + '<div data-role="report" hidden></div>'
             + '<div data-role="table"></div>';
 
@@ -268,10 +268,22 @@ window.Kb24Balance = (function () {
         setTimeout(function () { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
     }
 
+    // Разделитель по первой строке: тот из «;», табуляции и «,», которого вне кавычек больше всего.
+    // Табуляцию ставят Calc и Excel, если сохранить как «текст»
+    function guessDelimiter(line) {
+        var counts = { ';': 0, '\t': 0, ',': 0 };
+        var quoted = false;
+        for (var i = 0; i < line.length; i++) {
+            if (line[i] === '"') { quoted = !quoted; }
+            else if (!quoted && line[i] in counts) { counts[line[i]]++; }
+        }
+        return [';', '\t', ','].reduce(function (best, c) { return counts[c] > counts[best] ? c : best; }, ';');
+    }
+
     function parseCsv(text) {
         var rows = [], row = [], cell = '', quoted = false;
         text = text.replace(/^﻿/, '');
-        var delimiter = text.split(/\r?\n/)[0].indexOf(';') !== -1 ? ';' : ',';
+        var delimiter = guessDelimiter(text.split(/\r?\n/)[0]);
         for (var i = 0; i < text.length; i++) {
             var c = text[i];
             if (quoted) {
@@ -333,6 +345,14 @@ window.Kb24Balance = (function () {
 
     // Excel сохраняет CSV в кодировке Windows (1251), а наш шаблон в UTF-8: пробуем UTF-8, иначе 1251
     function decode(buffer) {
+        var bytes = new Uint8Array(buffer);
+        // «Юникод» в Calc и Excel — это UTF-16 с отметкой порядка байтов в начале
+        if (bytes[0] === 0xFF && bytes[1] === 0xFE) {
+            return new TextDecoder('utf-16le').decode(buffer);
+        }
+        if (bytes[0] === 0xFE && bytes[1] === 0xFF) {
+            return new TextDecoder('utf-16be').decode(buffer);
+        }
         try {
             return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
         } catch (e) {
@@ -356,13 +376,15 @@ window.Kb24Balance = (function () {
             var index = {};
             CSV_COLUMNS.forEach(function (c) { index[c[0]] = header.indexOf(c[1].toLowerCase()); });
             if (index.userId === -1 && index.name === -1) {
-                show('В файле нет колонки «ID» или «Сотрудник». Скачайте шаблон и заполните его.', true);
+                show('В файле нет колонки «ID» или «Сотрудник». Скачайте шаблон и заполните его.'
+                    + '<br>Первая строка файла: ' + esc(header.join(' | ').slice(0, 200)), true);
                 return;
             }
             // Без колонок с данными все строки показались бы «без изменений»: так было с файлом в неизвестной кодировке
             if (['hireDate', 'days', 'asOf', 'comment'].every(function (key) { return index[key] === -1; })) {
                 show('В файле не найдены колонки «Дата приёма», «Остаток, дн.», «На дату», «Комментарий». '
-                    + 'Проверьте первую строку файла: она должна быть как в шаблоне.', true);
+                    + 'Проверьте первую строку файла: она должна быть как в шаблоне.'
+                    + '<br>Первая строка файла: ' + esc(header.join(' | ').slice(0, 200)), true);
                 return;
             }
             var byId = {};
