@@ -69,8 +69,7 @@ window.Kb24Routes = (function () {
             + 'Поданные заявки идут по маршруту, каким он был при подаче.</p>'
             + '<div class="routes">' + (data.routes.length ? data.routes.map(card).join('')
                 : '<p class="hint">Маршрутов пока нет: все заявки идут по цепочке по умолчанию.</p>') + '</div>'
-            + editorsBlock()
-            + '<div id="route-picker" hidden></div>';
+            + editorsBlock();
 
         root().querySelector('[data-role="add"]').addEventListener('click', function () {
             openEditor({ id: 0, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], steps: [newStep('Руководитель отдела', 'head')] });
@@ -117,8 +116,9 @@ window.Kb24Routes = (function () {
     }
 
     function bindEditors() {
-        root().querySelector('[data-role="editors"]').addEventListener('click', function () {
-            pick('Кто настраивает маршруты', true, view.data.editorIds).then(function (users) {
+        var button = root().querySelector('[data-role="editors"]');
+        button.addEventListener('click', function () {
+            pick('Кто настраивает маршруты', true, view.data.editorIds, button.parentNode).then(function (users) {
                 if (!users) {
                     return;
                 }
@@ -131,9 +131,9 @@ window.Kb24Routes = (function () {
         });
     }
 
-    function pick(title, multiple, ids) {
+    function pick(title, multiple, ids, anchor) {
         var selected = ids.filter(Boolean).map(function (id) { return { id: id, name: ctx.name(id) }; });
-        return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected, box: 'route-picker' }).then(function (users) {
+        return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected, anchor: anchor }).then(function (users) {
             (users || []).forEach(function (user) { ctx.rememberName(user.id, user.name); });
             return users;
         });
@@ -174,8 +174,7 @@ window.Kb24Routes = (function () {
             + 'по маршруту берётся наибольший срок среди включённых шагов. «Отклонить до» — позже этого срока шаг может только согласовать; 0 — без ограничения.</p>'
             + '<div class="actions"><button type="button" class="primary" data-role="save">Сохранить</button>'
             + '<button type="button" data-role="close">Отмена</button>'
-            + (route.id ? '<button type="button" class="danger" data-role="delete">Удалить маршрут</button>' : '') + '</div>'
-            + '<div id="route-picker" hidden></div>';
+            + (route.id ? '<button type="button" class="danger" data-role="delete">Удалить маршрут</button>' : '') + '</div>';
 
         var tbody = root().querySelector('[data-role="steps"]');
 
@@ -239,7 +238,7 @@ window.Kb24Routes = (function () {
                 if (pickButton) {
                     pickButton.addEventListener('click', function () {
                         readSteps();
-                        pick('Кто согласует на шаге ' + (index + 1), false, [route.steps[index].userId]).then(function (users) {
+                        pick('Кто согласует на шаге ' + (index + 1), false, [route.steps[index].userId], tr).then(function (users) {
                             if (users) {
                                 route.steps[index].userId = users.length ? users[0].id : 0;
                             }

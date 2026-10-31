@@ -436,22 +436,22 @@
                 .then(function () { button.disabled = false; });
         });
 
-        function pick(title, multiple, ids) {
+        function pick(title, multiple, ids, anchor) {
             var selected = ids.filter(Boolean).map(function (id) { return { id: id, name: name(id) }; });
-            return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected }).then(function (users) {
+            return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected, anchor: anchor }).then(function (users) {
                 (users || []).forEach(function (user) { state.names[user.id] = user.name; });
                 return users;
             });
         }
         el('pick-director').addEventListener('click', function () {
-            pick('Директор', false, [state.me.roles.director]).then(function (users) {
+            pick('Директор', false, [state.me.roles.director], el('pick-director').closest('tr')).then(function (users) {
                 if (users) {
                     saveRoles(users.length ? users[0].id : null, state.me.roles.hr);
                 }
             });
         });
         el('pick-hr').addEventListener('click', function () {
-            pick('Отдел кадров', true, state.me.roles.hr).then(function (users) {
+            pick('Отдел кадров', true, state.me.roles.hr, el('pick-hr').closest('tr')).then(function (users) {
                 if (users) {
                     saveRoles(state.me.roles.director, users.map(function (user) { return user.id; }));
                 }
