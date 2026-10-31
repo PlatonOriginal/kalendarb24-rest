@@ -229,19 +229,21 @@ final class RouteServiceTest extends TestCase
         self::assertSame(['create', 'reroute'], array_column($card['history'], 'action'));
     }
 
-    public function testRejectIsBlockedWhereStepMayNotRejectOrTooLate(): void
+    public function testRejectIsBlockedTooCloseToStart(): void
     {
         $this->saveRoute(['steps' => [
-            $this->step('Руководитель', 'head', ['canReject' => false]),
+            $this->step('Руководитель', 'head', ['rejectDays' => 3]),
             $this->step('Директор', 'director', ['rejectDays' => 10]),
         ]]);
         $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-02', '2026-11-06');
 
-        $card = $this->service->card($this->user(self::ACCOUNTING_HEAD), $request['id']);
-        self::assertFalse($card['can']['reject']);
-        self::assertSame('На шаге «Руководитель» заявку можно только согласовать', $card['rejectBlocked']);
+        // До начала 6 дней: руководитель (срок 3 дн.) ещё может отклонить, директор (10 дн.) уже нет
+        self::assertTrue($this->service->card($this->user(self::ACCOUNTING_HEAD), $request['id'])['can']['reject']);
 
         $request = $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        $card = $this->service->card($this->user(self::DIRECTOR), $request['id']);
+        self::assertFalse($card['can']['reject']);
+        self::assertSame('Отклонить на шаге «Директор» можно не позже чем за 10 дн. до начала', $card['rejectBlocked']);
         try
         {
             $this->service->reject($this->user(self::DIRECTOR), $request['id'], array_key_first(\Kb24Rest\Vacation\RejectReasons::all()));

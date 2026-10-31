@@ -317,7 +317,7 @@
             var who = step.actorId ? name(step.actorId) : (step.kind === 'user' ? name(step.userId) : STEP_KIND[step.kind] || '');
             return '<li class="step-' + esc(step.state) + '"><span class="step-mark">' + STEP_MARK[step.state] + '</span> <b>' + esc(step.name) + '</b> — '
                 + esc(who) + ', ' + esc(STEP_STATE[step.state])
-                + (!step.canReject ? ', только согласует' : step.rejectUntil ? ', отклонить можно до ' + esc(formatDate(step.rejectUntil)) : '') + '</li>';
+                + (step.rejectUntil ? ', отклонить можно до ' + esc(formatDate(step.rejectUntil)) : '') + '</li>';
         }).join('') + '</ol>';
     }
 

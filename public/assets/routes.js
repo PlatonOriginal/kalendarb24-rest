@@ -98,7 +98,7 @@ window.Kb24Routes = (function () {
             + ' · Подача не позже чем за ' + esc(minDays) + ' дн.</div>'
             + '<ol class="route-steps">' + route.steps.map(function (step) {
                 return '<li class="' + (step.active ? '' : 'is-off') + '"><b>' + esc(step.name) + '</b> — ' + esc(who(step))
-                    + (step.canReject ? (step.rejectDays ? ', отклонить не позже чем за ' + esc(step.rejectDays) + ' дн. до начала' : '') : ', только согласует')
+                    + (step.rejectDays ? ', отклонить не позже чем за ' + esc(step.rejectDays) + ' дн. до начала' : '')
                     + (step.submitDays ? ', подача за ' + esc(step.submitDays) + ' дн.' : '')
                     + (step.active ? '' : ', выключен') + '</li>';
             }).join('') + '</ol>'
@@ -140,7 +140,7 @@ window.Kb24Routes = (function () {
     }
 
     function newStep(name, kind) {
-        return { id: 0, name: name || '', kind: kind || 'head', userId: 0, canReject: true, submitDays: 0, rejectDays: 0, active: true };
+        return { id: 0, name: name || '', kind: kind || 'head', userId: 0, submitDays: 0, rejectDays: 0, active: true };
     }
 
     function openEditor(route) {
@@ -165,7 +165,6 @@ window.Kb24Routes = (function () {
             + '</div>'
             + '<h3>Шаги <span class="hint">(от 1 до ' + MAX_STEPS + ')</span></h3>'
             + '<table class="route-table"><thead><tr><th>№</th><th>Роль</th><th>Кто согласует</th>'
-            + '<th title="Может ли этот шаг отклонить заявку">Может отклонить</th>'
             + '<th title="Заявку подают не позже чем за столько дней до начала">Подача за, дн.</th>'
             + '<th title="Отклонить на этом шаге можно не позже чем за столько дней до начала">Отклонить до, дн.</th>'
             + '<th>Включён</th><th></th></tr></thead><tbody data-role="steps"></tbody></table>'
@@ -186,7 +185,6 @@ window.Kb24Routes = (function () {
                     name: tr.querySelector('[name="stepName"]').value,
                     kind: kind,
                     userId: kind === 'user' ? route.steps[index].userId : 0,
-                    canReject: tr.querySelector('[name="canReject"]').checked,
                     submitDays: Number(tr.querySelector('[name="submitDays"]').value) || 0,
                     rejectDays: Number(tr.querySelector('[name="rejectDays"]').value) || 0,
                     active: tr.querySelector('[name="stepActive"]').checked
@@ -203,7 +201,6 @@ window.Kb24Routes = (function () {
                     }).join('') + '</select>'
                     + (step.kind === 'user' ? '<br><button type="button" data-pick>' + esc(step.userId ? ctx.name(step.userId) : 'Выбрать сотрудника') + '</button>' : '')
                     + '</td>'
-                    + '<td><input type="checkbox" name="canReject"' + (step.canReject ? ' checked' : '') + '></td>'
                     + '<td><input type="number" min="0" max="365" name="submitDays" value="' + esc(step.submitDays) + '"></td>'
                     + '<td><input type="number" min="0" max="365" name="rejectDays" value="' + esc(step.rejectDays) + '"></td>'
                     + '<td><input type="checkbox" name="stepActive"' + (step.active ? ' checked' : '') + '></td>'

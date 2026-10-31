@@ -8,7 +8,7 @@ namespace Kb24Rest\Domain;
  *
  * Маршрут: ['id', 'active' => bool, 'exclusive' => bool, 'kinds' => string[], 'departmentIds' => int[], 'sort'].
  * Пустой список видов или отделов значит «все».
- * Шаг: ['active' => bool, 'canReject' => bool, 'submitDays', 'rejectDays', 'name', ...].
+ * Шаг: ['active' => bool, 'submitDays', 'rejectDays', 'name', ...].
  */
 final class RoutePlan
 {
@@ -115,16 +115,13 @@ final class RoutePlan
     }
 
     /**
-     * Может ли шаг отклонить заявку сегодня: шагу разрешено отклонять и до начала не меньше rejectDays дней.
+     * Может ли шаг отклонить заявку сегодня: до начала не меньше rejectDays дней.
+     * Шагов «только согласует» нет: согласующий без права отказа ничего не решает.
      *
      * @return string|null причина, почему нельзя
      */
     public static function rejectBlocked(array $step, \DateTimeImmutable $start, \DateTimeImmutable $today): ?string
     {
-        if (!$step['canReject'])
-        {
-            return 'На шаге «' . $step['name'] . '» заявку можно только согласовать';
-        }
         $days = (int)($step['rejectDays'] ?? 0);
         if ($days > 0 && $today > $start->modify("-{$days} days"))
         {
