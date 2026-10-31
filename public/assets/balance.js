@@ -302,17 +302,42 @@ window.Kb24Balance = (function () {
         return { error: matches.length ? 'несколько сотрудников с таким ФИО, укажите ID' : 'сотрудник не найден' };
     }
 
+    // Дата из файла в виде Y-m-d: Excel пересохраняет 31.12.2026 как 31.12.26
+    function normalizeDate(value) {
+        var m = String(value).trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+        if (m) {
+            var year = m[3].length === 2 ? '20' + m[3] : m[3];
+            return year + '-' + pad(+m[2]) + '-' + pad(+m[1]);
+        }
+        return String(value).trim();
+    }
+
+    function normalizeDays(value) {
+        var text = String(value).trim().replace(',', '.');
+        return text === '' || isNaN(Number(text)) ? text : String(Number(text));
+    }
+
     // Совпадает ли строка файла с тем, что уже сохранено: такие строки не отправляем
     function unchanged(item, userId) {
         var record = view.records[userId] || { hireDate: '', balance: null };
         var b = record.balance;
-        var same = function (key, current) {
-            return !(key in item) || item[key] === current;
+        var same = function (key, current, normalize) {
+            return !(key in item) || normalize(item[key]) === normalize(current);
         };
-        return same('hireDate', record.hireDate ? human(record.hireDate) : '')
-            && same('days', b ? formatDays(b.days) : '')
-            && same('asOf', b ? human(b.asOf) : '')
-            && same('comment', b ? b.comment : '');
+        var text = function (value) { return String(value).trim(); };
+        return same('hireDate', record.hireDate, normalizeDate)
+            && same('days', b ? String(b.days) : '', normalizeDays)
+            && same('asOf', b ? b.asOf : '', normalizeDate)
+            && same('comment', b ? b.comment : '', text);
+    }
+
+    // Excel сохраняет CSV в кодировке Windows (1251), а наш шаблон в UTF-8: пробуем UTF-8, иначе 1251
+    function decode(buffer) {
+        try {
+            return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+        } catch (e) {
+            return new TextDecoder('windows-1251').decode(buffer);
+        }
     }
 
     function importFile(file) {
@@ -325,13 +350,19 @@ window.Kb24Balance = (function () {
         };
         var reader = new FileReader();
         reader.onload = function () {
-            var rows = parseCsv(String(reader.result));
-            var header = (rows.shift() || []).map(function (h) { return h.trim().toLowerCase(); });
+            var rows = parseCsv(decode(reader.result));
+            var header = (rows.shift() || []).map(function (h) { return h.trim().toLowerCase().replace(/\s+/g, ' '); });
             // Колонки ищем по заголовку, чтобы порядок в файле был не важен
             var index = {};
             CSV_COLUMNS.forEach(function (c) { index[c[0]] = header.indexOf(c[1].toLowerCase()); });
             if (index.userId === -1 && index.name === -1) {
                 show('В файле нет колонки «ID» или «Сотрудник». Скачайте шаблон и заполните его.', true);
+                return;
+            }
+            // Без колонок с данными все строки показались бы «без изменений»: так было с файлом в неизвестной кодировке
+            if (['hireDate', 'days', 'asOf', 'comment'].every(function (key) { return index[key] === -1; })) {
+                show('В файле не найдены колонки «Дата приёма», «Остаток, дн.», «На дату», «Комментарий». '
+                    + 'Проверьте первую строку файла: она должна быть как в шаблоне.', true);
                 return;
             }
             var byId = {};
@@ -385,7 +416,7 @@ window.Kb24Balance = (function () {
                 show(esc(error && error.message ? error.message : 'Не удалось загрузить файл'), true);
             });
         };
-        reader.readAsText(file, 'utf-8');
+        reader.readAsArrayBuffer(file);
     }
 
     function errorsHtml(errors) {
