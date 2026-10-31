@@ -16,6 +16,7 @@ final class Schema
     public const LIMITS = 'kblimit';
     public const BALANCES = 'kbbal';
     public const ROUTES = 'kbroute';
+    public const ACKS = 'kback';
 
     /**
      * @return array<string, array{name: string, properties: array<string, array{name: string, type: string}>}>
@@ -43,6 +44,7 @@ final class Schema
                     'CANCEL_REASON' => ['name' => 'Отмена: причина', 'type' => 'S'],
                     'ROUTE_ID' => ['name' => 'Маршрут (ID записи kbroute)', 'type' => 'N'],
                     'ROUTE_DATA' => ['name' => 'Маршрут на момент подачи (JSON)', 'type' => 'S'],
+                    'WATCHERS' => ['name' => 'Кого уведомить о результате, из маршрута при подаче (JSON)', 'type' => 'S'],
                 ],
             ],
             self::HISTORY => [
@@ -92,14 +94,31 @@ final class Schema
                 'name' => 'Отпуска: маршруты согласования',
                 'properties' => [
                     'ROUTE_NAME' => ['name' => 'Название', 'type' => 'S'],
+                    'IS_DEFAULT' => ['name' => 'Маршрут по умолчанию (Y/N)', 'type' => 'S'],
                     'ACTIVE' => ['name' => 'Включён (Y/N)', 'type' => 'S'],
                     'EXCLUSIVE' => ['name' => 'Единственный вариант для своих видов (Y/N)', 'type' => 'S'],
                     'KINDS' => ['name' => 'Виды отсутствия (коды через запятую, пусто — все)', 'type' => 'S'],
                     'DEPTS' => ['name' => 'Отделы (ID через запятую, пусто — все)', 'type' => 'S'],
                     'SORT' => ['name' => 'Сортировка', 'type' => 'N'],
                     'STEPS' => ['name' => 'Шаги (JSON)', 'type' => 'S'],
+                    'WATCHERS' => ['name' => 'Кого уведомить о результате (JSON)', 'type' => 'S'],
                     'UPDATED_BY' => ['name' => 'Кто изменил (ID)', 'type' => 'N'],
                     'UPDATED_AT' => ['name' => 'Когда изменил', 'type' => 'S'],
+                ],
+            ],
+            self::ACKS => [
+                'name' => 'Отпуска: ознакомление с результатом',
+                'properties' => [
+                    'REQ_ID' => ['name' => 'Заявка (ID)', 'type' => 'N'],
+                    'USER_ID' => ['name' => 'Кто должен ознакомиться (ID)', 'type' => 'N'],
+                    'EVENT' => ['name' => 'О чём (approved, cancelled)', 'type' => 'S'],
+                    'DATE_FROM' => ['name' => 'Начало отсутствия', 'type' => 'S'],
+                    'TASK_MODE' => ['name' => 'Задача (none, auto, ask)', 'type' => 'S'],
+                    'TASK_DAYS' => ['name' => 'Срок задачи: дней до начала', 'type' => 'N'],
+                    'TASK_ID' => ['name' => 'Поставленная задача (ID)', 'type' => 'N'],
+                    'TASK_ERROR' => ['name' => 'Почему задача не поставлена', 'type' => 'S'],
+                    'ACK_AT' => ['name' => 'Когда ознакомился', 'type' => 'S'],
+                    'REMIND_AT' => ['name' => 'Последнее напоминание (дата)', 'type' => 'S'],
                 ],
             ],
         ];

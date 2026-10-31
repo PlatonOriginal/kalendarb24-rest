@@ -40,6 +40,7 @@ final class RequestService
         private readonly ?LimitService $limits = null,
         private readonly ?BalanceService $balances = null,
         private readonly ?RouteService $routes = null,
+        private readonly ?WatchService $watch = null,
     ) {
     }
 
@@ -61,7 +62,12 @@ final class RequestService
         {
             throw new VacationError('Сотрудник не привязан к отделу в структуре компании');
         }
+        // Без сервиса маршрутов (старые тесты) — прежняя цепочка по умолчанию со статусами head_review и т. д.
         $plan = $this->routes?->findFor($portal, $departmentId, $kind);
+        if ($this->routes !== null && $plan === null)
+        {
+            throw new VacationError('У подходящего маршрута выключены все шаги: проверьте вкладку «Маршруты»');
+        }
         $minDays = $plan !== null ? RoutePlan::minSubmitDays($plan['steps']) : ($this->settings?->minSubmitDays($portal) ?? 0);
         $exempt = !Kinds::all()[$kind]['paid'] && ($this->settings?->minSubmitExemptUnpaid($portal) ?? false);
         if (!$exempt && $range->from < $this->today->modify("+{$minDays} days"))
@@ -114,8 +120,12 @@ final class RequestService
             'DATE_TO' => $range->to->format('Y-m-d'),
             'DAYS' => $days,
         ];
-        // Все шаги маршрута пропущены (например, единственный согласующий подаёт заявку сам): работает цепочка по умолчанию
         $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $user->userId, $departmentId, $this->allowSelfApproval ? [] : [$user->userId]) : null;
+        if ($plan !== null && $step === null)
+        {
+            // Например, директор подаёт заявку, а в маршруте согласует только директор
+            throw new VacationError('Заявку некому согласовать: на всех шагах маршрута «' . $plan['name'] . '» согласующий — вы сами. Добавьте в маршрут другой шаг');
+        }
         if ($step !== null)
         {
             $id = $this->storage->add($portal, Schema::REQUESTS, $kind, $values + [
@@ -123,7 +133,8 @@ final class RequestService
                 'APPROVER_ID' => $step['approverId'],
                 'ROUTE_ID' => $plan['id'],
                 'STEP' => $step['index'],
-                'ROUTE_DATA' => json_encode($plan, JSON_UNESCAPED_UNICODE),
+                'ROUTE_DATA' => json_encode(['id' => $plan['id'], 'name' => $plan['name'], 'steps' => $plan['steps']], JSON_UNESCAPED_UNICODE),
+                'WATCHERS' => json_encode($plan['watchers'] ?? [], JSON_UNESCAPED_UNICODE),
             ]);
             $this->log($portal, $id, $user->userId, 'create', null, Status::ROUTE_REVIEW);
             $this->logReroute($portal, $id, $step);
@@ -302,6 +313,7 @@ final class RequestService
         $request = $this->load($portal, $id);
         $this->absence?->remove($portal, $request);
         $this->notifier?->add($portal, 'cancelled', $request, $this->participants($portal, $request), $user->userId);
+        $this->notifyWatchers($portal, $request, 'cancelled');
 
         return $request;
     }
@@ -430,6 +442,7 @@ final class RequestService
             'request' => [Schema::REQUESTS, ['ID' => $id]],
             'history' => [Schema::HISTORY, ['PROPERTY_REQ_ID' => $id]],
             'roles' => [Schema::ROLES, []],
+            ...($this->watch !== null ? ['acks' => [Schema::ACKS, ['PROPERTY_REQ_ID' => $id]]] : []),
         ]) : ['request' => []];
         if ($found['request'] === [])
         {
@@ -445,7 +458,8 @@ final class RequestService
         unset($entry);
         $this->roles->remember($portal, $found['roles']);
         $roles = $this->roles->roles($portal);
-        $participants = array_merge([$request['userId'], $request['approverId']], array_column($history, 'actorId'));
+        $acks = $this->watch?->records($found['acks'] ?? []) ?? [];
+        $participants = array_merge([$request['userId'], $request['approverId']], array_column($history, 'actorId'), array_column($acks, 'userId'));
         $visible = in_array($user->userId, $participants, true)
             || $user->userId === $roles['director']
             || in_array($user->userId, $roles['hr'], true)
@@ -479,8 +493,44 @@ final class RequestService
             ],
             'cancelHint' => (string)$cancelHint,
             'rejectBlocked' => (string)$rejectBlocked,
+            // Кто должен ознакомиться с результатом; myAck — что ждёт от текущего сотрудника
+            'acks' => $acks,
+            'myAck' => array_values(array_filter($acks, static fn(array $a) => $a['userId'] === $user->userId && $a['ackAt'] === ''))[0] ?? null,
             'route' => $plan !== null ? $this->exportRoute($portal, $request, $plan, $history) : null,
         ];
+    }
+
+    public function acknowledge(CurrentUser $user, int $id, bool $task, string $deadline): array
+    {
+        if ($this->watch === null)
+        {
+            throw new VacationError('Ознакомление недоступно');
+        }
+
+        return ['acks' => $this->watch->acknowledge($user, $this->load($user->portal, $id), $task, $deadline)];
+    }
+
+    /**
+     * Заявки, с результатом которых сотрудник ещё не ознакомился (вкладка «На согласовании»).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function toAcknowledge(CurrentUser $user): array
+    {
+        $items = [];
+        foreach ($this->watch?->pendingFor($user) ?? [] as $record)
+        {
+            try
+            {
+                $items[] = ['ack' => $record] + $this->load($user->portal, $record['requestId']);
+            }
+            catch (VacationError)
+            {
+                // Заявку удалили из хранилища вручную: напоминать не о чем
+            }
+        }
+
+        return $items;
     }
 
     /**
@@ -577,7 +627,11 @@ final class RequestService
             return null;
         }
         $load = array_fill_keys($hr, 0);
-        foreach ($this->findRequests($portal, ['PROPERTY_STATUS' => Status::HR_REVIEW]) as $request)
+        $reviewing = [
+            ...$this->findRequests($portal, ['PROPERTY_STATUS' => Status::HR_REVIEW]),
+            ...($this->routes !== null ? $this->findRequests($portal, ['PROPERTY_STATUS' => Status::ROUTE_REVIEW]) : []),
+        ];
+        foreach ($reviewing as $request)
         {
             if (isset($load[$request['approverId']]))
             {
@@ -708,6 +762,7 @@ final class RequestService
             'cancelStep' => (string)($values['CANCEL_STEP'] ?? ''),
             'cancelReason' => (string)($values['CANCEL_REASON'] ?? ''),
             'routeId' => (int)($values['ROUTE_ID'] ?? 0),
+            'watchers' => is_array($watchers = json_decode((string)($values['WATCHERS'] ?? ''), true)) ? $watchers : [],
             'step' => (int)($values['STEP'] ?? 0),
             // Название текущего шага маршрута для статуса «На шаге «…»»
             'stepName' => ($values['STATUS'] ?? '') === Status::ROUTE_REVIEW
@@ -752,6 +807,7 @@ final class RequestService
             $request = $this->load($portal, $id);
             $this->absence?->add($portal, $request);
             $this->notifier?->add($portal, 'approved', $request, [$request['userId']], $user->userId);
+            $this->notifyWatchers($portal, $request, 'approved');
 
             return $request;
         }
@@ -781,7 +837,7 @@ final class RequestService
             static fn(array $step) => ['active' => ($step['active'] ?? true) && ($flags[$step['id'] ?? 0] ?? true)] + $step,
             $plan['steps'],
         );
-        $next = RoutePlan::next($steps, $from, $skip, fn(array $step) => $this->stepApprover($portal, $step, $userId, $departmentId));
+        $next = RoutePlan::next($steps, $from, $skip, fn(array $step) => $this->stepApprover($portal, $step, $userId, $departmentId, $skip));
         if ($next === null)
         {
             return null;
@@ -791,16 +847,49 @@ final class RequestService
         {
             throw new VacationError('Не найден согласующий: проверьте структуру компании и роли в настройках');
         }
+        if ($approverId === $userId && !$this->allowSelfApproval)
+        {
+            throw new VacationError('Заявку некому согласовать, кроме вас самих: назначьте в отдел кадров другого сотрудника');
+        }
 
         return ['index' => $next['index'], 'approverId' => $approverId, 'rerouted' => $next['approverId'] === null];
     }
 
-    private function stepApprover(Portal $portal, array $step, int $userId, int $departmentId): ?int
+    /**
+     * Получатели «Уведомить о результате» из маршрута при подаче: роль определяется сейчас, автор не уведомляется.
+     */
+    private function notifyWatchers(Portal $portal, array $request, string $event): void
     {
+        if ($this->watch === null)
+        {
+            return;
+        }
+        $recipients = [];
+        foreach ($request['watchers'] as $watcher)
+        {
+            if (!in_array($event, (array)($watcher['events'] ?? []), true))
+            {
+                continue;
+            }
+            $userId = $this->stepApprover($portal, $watcher, $request['userId'], $request['deptId']);
+            if ($userId !== null && $userId !== $request['userId'] && !isset($recipients[$userId]))
+            {
+                $recipients[$userId] = ['userId' => $userId, 'task' => (string)($watcher['task'] ?? 'none'), 'taskDays' => (int)($watcher['taskDays'] ?? 0)];
+            }
+        }
+        $this->watch->start($portal, $request, $event, array_values($recipients));
+    }
+
+    /**
+     * @param list<int> $skip кто уже согласовал: за отдел кадров засчитывается согласование любого сотрудника ОК
+     */
+    private function stepApprover(Portal $portal, array $step, int $userId, int $departmentId, array $skip = []): ?int
+    {
+        $hrDone = array_values(array_diff(array_intersect($skip, $this->roles->roles($portal)['hr']), [$userId]));
         $approverId = match ($step['kind'] ?? '')
         {
             RouteService::KIND_HEAD => $this->structure->orgChart($portal)->nearestHead($userId, $departmentId),
-            RouteService::KIND_HR => $this->hrApprover($portal, $userId, $departmentId),
+            RouteService::KIND_HR => $hrDone[0] ?? $this->hrApprover($portal, $userId, $departmentId),
             RouteService::KIND_DIRECTOR => $this->roles->roles($portal)['director'],
             default => (int)($step['userId'] ?? 0),
         };

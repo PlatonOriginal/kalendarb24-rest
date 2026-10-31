@@ -13,6 +13,10 @@ window.Kb24Routes = (function () {
         ['user', 'Конкретный сотрудник']
     ];
 
+    var EVENTS = [['approved', 'Утверждение'], ['cancelled', 'Отмена утверждённого']];
+    var TASKS = [['none', 'Не ставить'], ['auto', 'Ставить сразу'], ['ask', 'Спросить при ознакомлении']];
+    var MAX_WATCHERS = 10;
+
     var ctx = null;
     var view = { data: null };
 
@@ -41,6 +45,7 @@ window.Kb24Routes = (function () {
         view.data.routes.forEach(function (route) {
             ids.push(route.updatedBy);
             route.steps.forEach(function (step) { ids.push(step.userId); });
+            route.watchers.forEach(function (watcher) { ids.push(watcher.userId); });
         });
         return ids;
     }
@@ -61,30 +66,36 @@ window.Kb24Routes = (function () {
         root().innerHTML = '<p><button type="button" class="primary" data-role="add">+ Новый маршрут</button></p>'
             + '<p class="hint">Маршрут задаёт шаги согласования для видов отсутствия и отделов. Из подходящих маршрутов срабатывает самый точный: '
             + 'закреплённый за видом как единственный вариант, затем маршрут отдела сотрудника (ближайшего вверх по структуре) с этим видом, отдела без вида, '
-            + 'вида без отдела и общий. Если не подошёл ни один, работает цепочка по умолчанию: руководитель, отдел кадров, директор '
-            + '(подача не позже чем за ' + esc(data.defaultMinDays) + ' дн., срок меняется на вкладке «Настройки»). '
+            + 'вида без отдела и общий. Если не подошёл ни один, работает маршрут «По умолчанию». '
             + 'Шаг пропускается, если согласующий на нём — автор заявки или тот, кто уже согласовал её на одном из прошлых шагов. '
             + 'Если на шаге согласующего нет (например, у отдела нет руководителя), заявка уходит в отдел кадров. '
             + 'Выключенный шаг пропускается и в уже поданных заявках, если они до него ещё не дошли. '
-            + 'Поданные заявки идут по маршруту, каким он был при подаче.</p>'
-            + '<div class="routes">' + (data.routes.length ? data.routes.map(card).join('')
-                : '<p class="hint">Маршрутов пока нет: все заявки идут по цепочке по умолчанию.</p>') + '</div>'
+            + 'Поданные заявки идут по маршруту, каким он был при подаче. '
+            + 'Получатели из «Уведомить о результате» не согласуют, а узнают об утверждении или отмене и подтверждают ознакомление; '
+            + 'пока не подтвердят, каждый рабочий день до начала отсутствия им приходит напоминание.</p>'
+            + '<div class="routes">' + data.routes.map(card).join('') + '</div>'
             + editorsBlock();
 
         root().querySelector('[data-role="add"]').addEventListener('click', function () {
-            openEditor({ id: 0, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], steps: [newStep('Руководитель отдела', 'head')] });
+            openEditor({ id: 0, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], steps: [newStep('Руководитель отдела', 'head')], watchers: [] });
         });
+        // По номеру в списке: у маршрута «По умолчанию», пока его не сохраняли, ID нет
         root().querySelectorAll('[data-route]').forEach(function (button) {
             button.addEventListener('click', function () {
-                var id = Number(button.dataset.route);
-                openEditor(JSON.parse(JSON.stringify(data.routes.filter(function (r) { return r.id === id; })[0])));
+                openEditor(JSON.parse(JSON.stringify(data.routes[Number(button.dataset.route)])));
             });
         });
         bindEditors();
         BX24.fitWindow();
     }
 
-    function card(route) {
+    function watcherText(watcher) {
+        var events = EVENTS.filter(function (e) { return watcher.events.indexOf(e[0]) !== -1; }).map(function (e) { return e[1].toLowerCase(); });
+        var task = { none: '', auto: ', задача сразу', ask: ', задача по выбору' }[watcher.task] || '';
+        return who(watcher) + ': ' + events.join(' и ') + task + (watcher.task !== 'none' ? ' (срок за ' + watcher.taskDays + ' дн. до начала)' : '');
+    }
+
+    function card(route, index) {
         var kinds = kindNames(route.kinds);
         var departments = departmentNames(route.departmentIds);
         var minDays = route.steps.reduce(function (max, s) { return s.active ? Math.max(max, s.submitDays) : max; }, 0);
@@ -92,9 +103,9 @@ window.Kb24Routes = (function () {
             + '<div class="route-head"><b>' + esc(route.name) + '</b>'
             + (route.active ? '' : ' <span class="chip">выключен</span>')
             + (route.exclusive ? ' <span class="chip accent">единственный для своих видов</span>' : '')
-            + ' <button type="button" data-route="' + esc(route.id) + '">Изменить</button></div>'
-            + '<div class="hint">Виды: ' + esc(kinds.length ? kinds.join(', ') : 'все')
-            + ' · Отделы: ' + esc(departments.length ? departments.join(', ') + ' (с подотделами)' : 'все')
+            + ' <button type="button" data-route="' + index + '">Изменить</button></div>'
+            + '<div class="hint">' + (route.isDefault ? 'Когда не подошёл ни один другой маршрут'
+                : 'Виды: ' + esc(kinds.length ? kinds.join(', ') : 'все') + ' · Отделы: ' + esc(departments.length ? departments.join(', ') + ' (с подотделами)' : 'все'))
             + ' · Подача не позже чем за ' + esc(minDays) + ' дн.</div>'
             + '<ol class="route-steps">' + route.steps.map(function (step) {
                 return '<li class="' + (step.active ? '' : 'is-off') + '"><b>' + esc(step.name) + '</b> — ' + esc(who(step))
@@ -102,6 +113,7 @@ window.Kb24Routes = (function () {
                     + (step.submitDays ? ', подача за ' + esc(step.submitDays) + ' дн.' : '')
                     + (step.active ? '' : ', выключен') + '</li>';
             }).join('') + '</ol>'
+            + (route.watchers.length ? '<div class="hint">Уведомить о результате: ' + route.watchers.map(function (w) { return esc(watcherText(w)); }).join('; ') + '</div>' : '')
             + (route.updatedBy ? '<div class="hint">Изменил: ' + esc(ctx.name(route.updatedBy)) + ', ' + esc(route.updatedAt) + '</div>' : '')
             + '</div>';
     }
@@ -145,12 +157,12 @@ window.Kb24Routes = (function () {
 
     function openEditor(route) {
         var kinds = ctx.me().kinds;
-        root().innerHTML = '<h2>' + (route.id ? 'Маршрут «' + esc(route.name) + '»' : 'Новый маршрут') + '</h2>'
+        root().innerHTML = '<h2>' + (route.id || route.isDefault ? 'Маршрут «' + esc(route.name) + '»' : 'Новый маршрут') + '</h2>'
             + '<div class="form route-form">'
             + '<label>Название <input name="name" maxlength="100" size="40" value="' + esc(route.name) + '" placeholder="Например, «Отпуска производства»"></label>'
-            + '<label class="check"><input type="checkbox" name="active"' + (route.active ? ' checked' : '') + '> маршрут включён</label>'
+            + (route.isDefault ? '' : '<label class="check"><input type="checkbox" name="active"' + (route.active ? ' checked' : '') + '> маршрут включён</label>')
             + '</div>'
-            + '<div class="route-cols">'
+            + (route.isDefault ? '<p class="hint">Действует на все виды отсутствия и отделы, когда не подошёл ни один другой маршрут. Выключить или удалить его нельзя.</p>' : '<div class="route-cols">'
             + '<div><h3>Виды отсутствия</h3><p class="hint">Ничего не выбрано — все виды.</p>'
             + Object.keys(kinds).map(function (code) {
                 return '<label class="check"><input type="checkbox" name="kind" value="' + esc(code) + '"'
@@ -162,7 +174,7 @@ window.Kb24Routes = (function () {
                 return '<option value="' + esc(d.id) + '"' + (route.departmentIds.indexOf(d.id) !== -1 ? ' selected' : '') + '>'
                     + new Array(d.depth + 1).join('   ') + esc(d.name) + '</option>';
             }).join('') + '</select></div>'
-            + '</div>'
+            + '</div>')
             + '<h3>Шаги <span class="hint">(от 1 до ' + MAX_STEPS + ')</span></h3>'
             + '<table class="route-table"><thead><tr><th>№</th><th>Роль</th><th>Кто согласует</th>'
             + '<th title="Заявку подают не позже чем за столько дней до начала">Подача за, дн.</th>'
@@ -171,11 +183,88 @@ window.Kb24Routes = (function () {
             + '<p><button type="button" data-role="add-step">+ Шаг</button></p>'
             + '<p class="hint">«Подача за» — за сколько дней до начала отсутствия нужно подать заявку, чтобы этот шаг успел её рассмотреть; '
             + 'по маршруту берётся наибольший срок среди включённых шагов. «Отклонить до» — позже этого срока шаг может только согласовать; 0 — без ограничения.</p>'
+            + '<h3>Уведомить о результате</h3>'
+            + '<p class="hint">Эти сотрудники не согласуют заявку, а получают уведомление об утверждении или отмене отсутствия и подтверждают ознакомление в карточке заявки. '
+            + 'Задачу ставим получателю, постановщик — автор заявки, срок — за указанное число дней до начала отсутствия. «Спросить» — получатель сам решает при ознакомлении и может поменять срок.</p>'
+            + '<table class="route-table"><thead><tr><th>Кого уведомить</th><th>О чём</th><th>Задача</th><th>Срок задачи: за, дн. до начала</th><th></th></tr></thead>'
+            + '<tbody data-role="watchers"></tbody></table>'
+            + '<p><button type="button" data-role="add-watcher">+ Получатель</button></p>'
             + '<div class="actions"><button type="button" class="primary" data-role="save">Сохранить</button>'
             + '<button type="button" data-role="close">Отмена</button>'
-            + (route.id ? '<button type="button" class="danger" data-role="delete">Удалить маршрут</button>' : '') + '</div>';
+            + (route.id && !route.isDefault ? '<button type="button" class="danger" data-role="delete">Удалить маршрут</button>' : '') + '</div>';
 
         var tbody = root().querySelector('[data-role="steps"]');
+        var wbody = root().querySelector('[data-role="watchers"]');
+
+        function readWatchers() {
+            // Пустой список показан строкой-подсказкой: читать нечего
+            if (!route.watchers.length) {
+                return;
+            }
+            route.watchers = Array.prototype.map.call(wbody.querySelectorAll('tr'), function (tr, index) {
+                var kind = tr.querySelector('[name="watchKind"]').value;
+                return {
+                    kind: kind,
+                    userId: kind === 'user' ? route.watchers[index].userId : 0,
+                    events: Array.prototype.map.call(tr.querySelectorAll('[name="watchEvent"]:checked'), function (input) { return input.value; }),
+                    task: tr.querySelector('[name="watchTask"]').value,
+                    taskDays: Number(tr.querySelector('[name="taskDays"]').value) || 0
+                };
+            });
+        }
+
+        function drawWatchers() {
+            wbody.innerHTML = route.watchers.length ? route.watchers.map(function (w) {
+                return '<tr><td><select name="watchKind">' + KINDS.map(function (k) {
+                        return '<option value="' + k[0] + '"' + (w.kind === k[0] ? ' selected' : '') + '>' + esc(k[1]) + '</option>';
+                    }).join('') + '</select>'
+                    + (w.kind === 'user' ? '<br><button type="button" data-pick>' + esc(w.userId ? ctx.name(w.userId) : 'Выбрать сотрудника') + '</button>' : '')
+                    + '</td><td>' + EVENTS.map(function (e) {
+                        return '<label class="check"><input type="checkbox" name="watchEvent" value="' + e[0] + '"' + (w.events.indexOf(e[0]) !== -1 ? ' checked' : '') + '> ' + esc(e[1]) + '</label>';
+                    }).join('<br>') + '</td>'
+                    + '<td><select name="watchTask">' + TASKS.map(function (t) {
+                        return '<option value="' + t[0] + '"' + (w.task === t[0] ? ' selected' : '') + '>' + esc(t[1]) + '</option>';
+                    }).join('') + '</select></td>'
+                    + '<td><input type="number" min="0" max="365" name="taskDays" value="' + esc(w.taskDays) + '"' + (w.task === 'none' ? ' disabled' : '') + '></td>'
+                    + '<td><button type="button" class="danger" data-remove title="Убрать">×</button></td></tr>';
+            }).join('') : '<tr><td colspan="5" class="hint">Никого: о результате узнаёт только автор заявки</td></tr>';
+            root().querySelector('[data-role="add-watcher"]').disabled = route.watchers.length >= MAX_WATCHERS;
+            Array.prototype.forEach.call(wbody.querySelectorAll('tr'), function (tr, index) {
+                if (!route.watchers.length) {
+                    return;
+                }
+                tr.querySelector('[data-remove]').addEventListener('click', function () {
+                    readWatchers();
+                    route.watchers.splice(index, 1);
+                    drawWatchers();
+                });
+                ['watchKind', 'watchTask'].forEach(function (field) {
+                    tr.querySelector('[name="' + field + '"]').addEventListener('change', function () {
+                        readWatchers();
+                        drawWatchers();
+                    });
+                });
+                var pickButton = tr.querySelector('[data-pick]');
+                if (pickButton) {
+                    pickButton.addEventListener('click', function () {
+                        readWatchers();
+                        pick('Кого уведомить', false, [route.watchers[index].userId], tr).then(function (users) {
+                            if (users) {
+                                route.watchers[index].userId = users.length ? users[0].id : 0;
+                            }
+                            drawWatchers();
+                        });
+                    });
+                }
+            });
+            BX24.fitWindow();
+        }
+
+        root().querySelector('[data-role="add-watcher"]').addEventListener('click', function () {
+            readWatchers();
+            route.watchers.push({ kind: 'hr', userId: 0, events: ['approved', 'cancelled'], task: 'none', taskDays: 3 });
+            drawWatchers();
+        });
 
         function readSteps() {
             route.steps = Array.prototype.map.call(tbody.querySelectorAll('tr'), function (tr, index) {
@@ -260,16 +349,21 @@ window.Kb24Routes = (function () {
         });
         root().querySelector('[data-role="save"]').addEventListener('click', function (e) {
             readSteps();
+            readWatchers();
             var form = root();
             var payload = {
                 id: route.id,
+                isDefault: route.isDefault,
                 name: form.querySelector('[name="name"]').value,
-                active: form.querySelector('[name="active"]').checked,
-                exclusive: form.querySelector('[name="exclusive"]').checked,
-                kinds: Array.prototype.map.call(form.querySelectorAll('[name="kind"]:checked'), function (input) { return input.value; }),
-                departmentIds: Array.prototype.map.call(form.querySelector('[name="departments"]').selectedOptions, function (option) { return Number(option.value); }),
-                steps: route.steps
+                steps: route.steps,
+                watchers: route.watchers
             };
+            if (!route.isDefault) {
+                payload.active = form.querySelector('[name="active"]').checked;
+                payload.exclusive = form.querySelector('[name="exclusive"]').checked;
+                payload.kinds = Array.prototype.map.call(form.querySelectorAll('[name="kind"]:checked'), function (input) { return input.value; });
+                payload.departmentIds = Array.prototype.map.call(form.querySelector('[name="departments"]').selectedOptions, function (option) { return Number(option.value); });
+            }
             e.target.disabled = true;
             ctx.api('/api/routes/save', { route: JSON.stringify(payload) }).then(function () {
                 ctx.showMessage('Маршрут сохранён');
@@ -295,6 +389,7 @@ window.Kb24Routes = (function () {
         }
 
         drawSteps();
+        drawWatchers();
     }
 
     return {

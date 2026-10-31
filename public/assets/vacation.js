@@ -27,6 +27,8 @@
         cancel_auto_approve: 'согласовал отмену автоматически (уже согласовал её раньше)',
         cancel_refuse: 'отказал в отмене'
     };
+    var ACK_EVENT = { approved: 'Отсутствие утверждено', cancelled: 'Утверждённое отсутствие отменено' };
+
     // Шаги маршрута в карточке: пройден, текущий, впереди, пропущен, на нём отказали
     var STEP_MARK = { done: '✓', current: '●', next: '○', skipped: '–', rejected: '✕' };
     var STEP_STATE = { done: 'согласовано', current: 'сейчас здесь', next: 'впереди', skipped: 'пропущен', rejected: 'отклонено' };
@@ -187,11 +189,17 @@
 
     function loadToApprove() {
         api('/api/requests/approve').then(function (data) {
-            el('approve-count').textContent = data.items.length ? '(' + data.items.length + ')' : '';
-            return loadNames(data.items.map(function (r) { return r.userId; })).then(function () {
+            var acks = data.acks || [];
+            var count = data.items.length + acks.length;
+            el('approve-count').textContent = count ? '(' + count + ')' : '';
+            return loadNames(data.items.concat(acks).map(function (r) { return r.userId; })).then(function () {
                 fillRows('approve-requests', data.items, function (r) {
                     return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status, r)];
                 }, 'Нет заявок, которые ждут вашего решения');
+                el('acks-block').hidden = !acks.length;
+                fillRows('ack-requests', acks, function (r) {
+                    return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), esc(ACK_EVENT[r.ack.event] || r.ack.event)];
+                }, '');
             });
         }).catch(showError);
     }
@@ -205,6 +213,7 @@
             var r = data.request;
             var ids = [r.userId, r.approverId].concat(data.history.map(function (h) { return h.actorId; }));
             (data.route ? data.route.steps : []).forEach(function (step) { ids.push(step.userId, step.actorId); });
+            (data.acks || []).forEach(function (a) { ids.push(a.userId); });
             return loadNames(ids).then(function () {
                 renderCard(data);
                 TABS.forEach(function (name) { el('tab-' + name).hidden = true; });
@@ -271,6 +280,7 @@
             + '</div>'
             + (data.cancelHint ? '<p class="hint">' + esc(data.cancelHint) + '</p>' : '')
             + (data.rejectBlocked ? '<p class="hint">' + esc(data.rejectBlocked) + '</p>' : '')
+            + ackBlock(data)
             + routeSteps(data.route)
             + '<h2>История</h2><ul>' + history + '</ul>'
             + '</div>';
@@ -281,7 +291,11 @@
                 var payload = {
                     reject: function () { return { reason: el('reject-reason').value }; },
                     cancel: function () { return { reason: el('cancel-reason').value }; },
-                    'cancel-refuse': function () { return { reason: el('refuse-reason').value }; }
+                    'cancel-refuse': function () { return { reason: el('refuse-reason').value }; },
+                    acknowledge: function () {
+                        var task = el('ack-task');
+                        return { task: task && task.checked ? '1' : '0', deadline: el('ack-deadline') ? el('ack-deadline').value : '' };
+                    }
                 }[action];
                 payload = payload ? payload() : {};
                 button.disabled = true;
@@ -294,7 +308,8 @@
                         cancel: 'Отмена отправлена на согласование',
                         'cancel-approve': 'Отмена согласована',
                         'cancel-refuse': 'В отмене отказано',
-                        'calendar-retry': 'Событие добавляется, обновите карточку через несколько секунд'
+                        'calendar-retry': 'Событие добавляется, обновите карточку через несколько секунд',
+                        acknowledge: 'Ознакомление подтверждено'
                     }[action]);
                 }).catch(function (error) {
                     button.disabled = false;
@@ -307,6 +322,30 @@
                 BX24.im.openMessenger(String(button.dataset.chat));
             });
         });
+    }
+
+    // Ознакомление с результатом: кнопка для текущего сотрудника и кто уже ознакомился
+    function ackBlock(data) {
+        var acks = data.acks || [];
+        if (!acks.length) {
+            return '';
+        }
+        var my = data.myAck;
+        var form = '';
+        if (my) {
+            form = '<div class="actions ack-form"><b>' + esc(ACK_EVENT[my.event] || my.event) + '.</b>'
+                + (my.taskMode === 'ask' ? '<label class="check"><input type="checkbox" id="ack-task" checked> поставить мне задачу со сроком</label>'
+                    + '<input type="date" id="ack-deadline" value="' + esc(my.deadline) + '">' : '')
+                + '<button type="button" class="primary" data-action="acknowledge">Ознакомился</button></div>';
+        }
+        var domain = BX24.getDomain();
+        return form + '<h2>Ознакомление с результатом</h2><ul>' + acks.map(function (a) {
+            var task = a.taskId
+                ? ', <a href="https://' + esc(domain) + '/company/personal/user/' + esc(a.userId) + '/tasks/task/view/' + esc(a.taskId) + '/" target="_blank">задача № ' + esc(a.taskId) + '</a>'
+                : (a.taskError ? ', <span class="fail">задача не поставлена: ' + esc(a.taskError) + '</span>' : '');
+            return '<li>' + esc(name(a.userId)) + ' — ' + esc((ACK_EVENT[a.event] || a.event).toLowerCase()) + ': '
+                + (a.ackAt ? 'ознакомился ' + esc(a.ackAt) : '<span class="hint">ещё не ознакомился</span>') + task + '</li>';
+        }).join('') + '</ul>';
     }
 
     function routeSteps(route) {
@@ -334,7 +373,6 @@
         el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
         el('see-other-departments').checked = !!(state.me.settings && state.me.settings.employees_see_other_departments);
         el('annual-days').value = state.me.settings ? state.me.settings.annual_days : '';
-        el('min-submit-days').value = state.me.settings ? state.me.settings.min_submit_days : '';
         el('min-submit-exempt-unpaid').checked = !!(state.me.settings && state.me.settings.min_submit_exempt_unpaid);
     }
 
@@ -343,7 +381,6 @@
             max_cancel_working_days: el('cancel-days').value,
             employees_see_other_departments: el('see-other-departments').checked ? '1' : '0',
             annual_days: el('annual-days').value,
-            min_submit_days: el('min-submit-days').value,
             min_submit_exempt_unpaid: el('min-submit-exempt-unpaid').checked ? '1' : '0'
         }).then(function (settings) {
             state.me.settings = settings;

@@ -46,6 +46,14 @@
         <thead><tr><th>№</th><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Шаг</th></tr></thead>
         <tbody></tbody>
     </table>
+    <div id="acks-block" hidden>
+        <h2>Ждут вашего ознакомления</h2>
+        <p class="hint">Вас указали в маршруте получателем результата: откройте заявку и подтвердите, что ознакомились.</p>
+        <table id="ack-requests" class="list">
+            <thead><tr><th>№</th><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Результат</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
 </section>
 
 <section id="tab-balances" hidden>
@@ -69,10 +77,9 @@
         <tr><th>Отдел кадров</th><td id="role-hr"></td><td><button type="button" id="pick-hr">Выбрать</button></td></tr>
     </table>
     <h2>Срок подачи заявки</h2>
-    <p class="hint">За сколько календарных дней до начала нужно подать заявку, если она идёт по цепочке по умолчанию. У маршрутов свой срок, он задаётся в шагах на вкладке «Маршруты».</p>
+    <p class="hint">За сколько дней до начала подавать заявку, задаётся в шагах маршрутов на вкладке «Маршруты», в том числе в маршруте «По умолчанию».</p>
     <div class="form">
-        <label>Не позже чем за, дней <input type="number" id="min-submit-days" min="0" max="365"></label>
-        <label class="check"><input type="checkbox" id="min-submit-exempt-unpaid"> Не проверять срок для отпуска без сохранения заработной платы (и по маршрутам)</label>
+        <label class="check"><input type="checkbox" id="min-submit-exempt-unpaid"> Не проверять срок подачи для отпуска без сохранения заработной платы</label>
     </div>
     <h2>Отмена утверждённого отсутствия</h2>
     <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем отдел кадров; после этого событие удаляется из календаря.</p>

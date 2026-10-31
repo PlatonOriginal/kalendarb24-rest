@@ -18,4 +18,11 @@ interface PortalStore
     public function storageVersion(string $memberId): ?string;
 
     public function setStorageVersion(string $memberId, string $version): void;
+
+    /**
+     * member_id всех порталов, где установлено приложение (для заданий по расписанию).
+     *
+     * @return list<string>
+     */
+    public function memberIds(): array;
 }

@@ -43,7 +43,8 @@ final class Notifier implements AfterResponse
 
     /**
      * @param string $event review (ждёт решения получателя), step, approved, rejected, withdrawn,
-     *                      cancel_review (отмена ждёт решения), cancelled, cancel_refused
+     *                      cancel_review (отмена ждёт решения), cancelled, cancel_refused,
+     *                      watch и remind (уведомить о результате и напомнить; $reason — approved или cancelled)
      * @param list<int> $to
      */
     public function add(Portal $portal, string $event, array $request, array $to, int $actorId, string $reason = ''): void
@@ -144,6 +145,10 @@ final class Notifier implements AfterResponse
             'cancelled' => ($userId === $request['userId'] ? 'Ваше отсутствие отменено' : 'Отсутствие отменено: ' . $author) . ', ' . $what,
             'cancel_refused' => 'В отмене отказано, отсутствие остаётся в силе: '
                 . ($userId === $request['userId'] ? '' : $author . ', ') . $what . '. Причина: ' . $item['reason'],
+            // Получателям из «Уведомить о результате»: в reason — approved или cancelled
+            'watch', 'remind' => ($item['event'] === 'remind' ? 'Напоминание. ' : '')
+                . ($item['reason'] === 'cancelled' ? 'Отменено утверждённое отсутствие: ' : 'Утверждено отсутствие: ')
+                . $author . ', ' . $what . '. Откройте заявку и подтвердите, что ознакомились',
         };
         // Скобки в params[req] кодируем: внутри [URL=...] нераскодированная «]» закрыла бы BB-код раньше времени
         $url = 'https://' . $portal->domain . '/marketplace/view/' . rawurlencode($this->appCode) . '/?params%5Breq%5D=' . $request['id'];
@@ -153,7 +158,8 @@ final class Notifier implements AfterResponse
             'MESSAGE' => $text . '[BR][URL=' . $url . ']Открыть заявку № ' . $request['id'] . '[/URL]',
             'MESSAGE_OUT' => $text . "\n" . $url,
             // Новое уведомление по той же заявке заменяет прежнее у этого же получателя
-            'TAG' => 'KB24_REQ_' . $request['id'] . '_' . $userId,
+            // Напоминание заменяет прежнее уведомление об ознакомлении, но не уведомления о согласовании
+            'TAG' => (in_array($item['event'], ['watch', 'remind'], true) ? 'KB24_ACK_' : 'KB24_REQ_') . $request['id'] . '_' . $userId,
         ];
     }
 
