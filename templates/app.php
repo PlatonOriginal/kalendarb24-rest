@@ -68,7 +68,6 @@
         <tr><th>Директор</th><td id="role-director"></td><td><button type="button" id="pick-director">Выбрать</button></td></tr>
         <tr><th>Отдел кадров</th><td id="role-hr"></td><td><button type="button" id="pick-hr">Выбрать</button></td></tr>
     </table>
-    <div id="user-picker" hidden></div>
     <h2>Срок подачи заявки</h2>
     <p class="hint">За сколько календарных дней до начала нужно подать заявку, если она идёт по цепочке по умолчанию. У маршрутов свой срок, он задаётся в шагах на вкладке «Маршруты».</p>
     <div class="form">

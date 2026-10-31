@@ -54,13 +54,33 @@
 
     /**
      * Открывает выбор и возвращает Promise со списком выбранных {id, name} или null, если выбор отменён.
-     * options: title, multiple, selected (список {id, name}), box (ID блока, по умолчанию user-picker).
+     * options: title, multiple, selected (список {id, name}), anchor (элемент, под которым открыть выбор:
+     * кнопка или поле, из которого выбирают; внутри таблицы выбор встаёт отдельной строкой под строкой с кнопкой).
      */
     function open(options) {
-        var box = el(options.box || 'user-picker');
+        var previous = document.querySelector('.picker-popup');
+        if (previous) {
+            previous.dispatchEvent(new Event('picker-close'));
+        }
+        var anchor = options.anchor;
+        var row = anchor.closest('tr');
+        var holder = anchor;
+        var box = document.createElement('div');
+        box.className = 'picker-popup';
+        if (row) {
+            holder = document.createElement('tr');
+            var cell = document.createElement('td');
+            cell.colSpan = row.children.length;
+            cell.appendChild(box);
+            holder.appendChild(cell);
+            row.parentNode.insertBefore(holder, row.nextSibling);
+        } else {
+            holder = box;
+            anchor.parentNode.insertBefore(box, anchor.nextSibling);
+        }
         var selected = (options.selected || []).slice();
 
-        box.innerHTML = '<h2>' + esc(options.title) + '</h2>'
+        box.innerHTML = '<h3>' + esc(options.title) + '</h3>'
             + '<div class="picker-search"><input type="search" placeholder="Поиск по фамилии или имени"></div>'
             + '<div class="picker">'
             + '<ul class="picker-tree"><li class="hint">Загружаю структуру…</li></ul>'
@@ -69,7 +89,6 @@
             + '<p class="picker-selected"></p>'
             + '<div class="actions"><button type="button" class="primary" data-picker="save">Сохранить</button>'
             + '<button type="button" data-picker="cancel">Отмена</button></div>';
-        box.hidden = false;
 
         var tree = box.querySelector('.picker-tree');
         var list = box.querySelector('.picker-users');
@@ -156,13 +175,21 @@
 
         renderSelected();
 
+        box.scrollIntoView({ block: 'nearest' });
+        search.focus();
+
         return new Promise(function (resolve) {
+            function close(result) {
+                if (holder.parentNode) {
+                    holder.parentNode.removeChild(holder);
+                }
+                BX24.fitWindow();
+                resolve(result);
+            }
+            box.addEventListener('picker-close', function () { close(null); });
             box.querySelectorAll('[data-picker]').forEach(function (button) {
                 button.addEventListener('click', function () {
-                    box.hidden = true;
-                    box.innerHTML = '';
-                    BX24.fitWindow();
-                    resolve(button.dataset.picker === 'save' ? selected : null);
+                    close(button.dataset.picker === 'save' ? selected : null);
                 });
             });
         });

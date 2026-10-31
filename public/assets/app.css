@@ -143,3 +143,6 @@ h3 { font-size: 14px; font-weight: 600; margin: 16px 0 4px; }
 .step-current .step-mark { color: #2066b0; }
 .step-rejected .step-mark { color: #ff5752; }
 .step-skipped, .step-next { color: #828b95; }
+.picker-popup { border: 1px solid #c6cdd3; border-radius: 6px; padding: 10px 12px; margin: 6px 0; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.08); max-width: 900px; }
+.picker-popup h3 { margin-top: 0; }
+.picker-popup .actions { margin-bottom: 0; }
