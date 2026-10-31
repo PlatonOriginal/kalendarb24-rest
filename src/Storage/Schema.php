@@ -15,6 +15,7 @@ final class Schema
     public const ROLES = 'kbrole';
     public const LIMITS = 'kblimit';
     public const BALANCES = 'kbbal';
+    public const ROUTES = 'kbroute';
 
     /**
      * @return array<string, array{name: string, properties: array<string, array{name: string, type: string}>}>
@@ -33,13 +34,15 @@ final class Schema
                     'DAYS' => ['name' => 'Дней', 'type' => 'N'],
                     'STATUS' => ['name' => 'Статус', 'type' => 'S'],
                     'APPROVER_ID' => ['name' => 'Текущий согласующий (ID)', 'type' => 'N'],
-                    'STEP' => ['name' => 'Шаг маршрута', 'type' => 'N'],
+                    'STEP' => ['name' => 'Шаг маршрута (номер с 0)', 'type' => 'N'],
                     'ROUTE' => ['name' => 'Согласующие (ID через запятую)', 'type' => 'S'],
                     'CAL_EVENT_ID' => ['name' => 'Событие в календаре сотрудника (ID)', 'type' => 'N'],
                     'CAL_ERROR' => ['name' => 'Почему событие или запись в графике не созданы', 'type' => 'S'],
                     'ABSENCE_ID' => ['name' => 'Запись в графике отсутствий (ID)', 'type' => 'N'],
                     'CANCEL_STEP' => ['name' => 'Отмена: шаг (head_review, hr_review, done, refused)', 'type' => 'S'],
                     'CANCEL_REASON' => ['name' => 'Отмена: причина', 'type' => 'S'],
+                    'ROUTE_ID' => ['name' => 'Маршрут (ID записи kbroute)', 'type' => 'N'],
+                    'ROUTE_DATA' => ['name' => 'Маршрут на момент подачи (JSON)', 'type' => 'S'],
                 ],
             ],
             self::HISTORY => [
@@ -51,6 +54,7 @@ final class Schema
                     'STATUS_FROM' => ['name' => 'Статус до', 'type' => 'S'],
                     'STATUS_TO' => ['name' => 'Статус после', 'type' => 'S'],
                     'REASON' => ['name' => 'Причина отказа (код из списка)', 'type' => 'S'],
+                    'STEP' => ['name' => 'Шаг маршрута (номер с 1, 0 — не по маршруту)', 'type' => 'N'],
                 ],
             ],
             self::ROLES => [
@@ -80,6 +84,20 @@ final class Schema
                     'DAYS' => ['name' => 'Остаток ежегодного отпуска, дн. (пусто — не внесён)', 'type' => 'S'],
                     'AS_OF' => ['name' => 'Остаток на дату, Y-m-d', 'type' => 'S'],
                     'COMMENT' => ['name' => 'Комментарий', 'type' => 'S'],
+                    'UPDATED_BY' => ['name' => 'Кто изменил (ID)', 'type' => 'N'],
+                    'UPDATED_AT' => ['name' => 'Когда изменил', 'type' => 'S'],
+                ],
+            ],
+            self::ROUTES => [
+                'name' => 'Отпуска: маршруты согласования',
+                'properties' => [
+                    'ROUTE_NAME' => ['name' => 'Название', 'type' => 'S'],
+                    'ACTIVE' => ['name' => 'Включён (Y/N)', 'type' => 'S'],
+                    'EXCLUSIVE' => ['name' => 'Единственный вариант для своих видов (Y/N)', 'type' => 'S'],
+                    'KINDS' => ['name' => 'Виды отсутствия (коды через запятую, пусто — все)', 'type' => 'S'],
+                    'DEPTS' => ['name' => 'Отделы (ID через запятую, пусто — все)', 'type' => 'S'],
+                    'SORT' => ['name' => 'Сортировка', 'type' => 'N'],
+                    'STEPS' => ['name' => 'Шаги (JSON)', 'type' => 'S'],
                     'UPDATED_BY' => ['name' => 'Кто изменил (ID)', 'type' => 'N'],
                     'UPDATED_AT' => ['name' => 'Когда изменил', 'type' => 'S'],
                 ],

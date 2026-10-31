@@ -14,6 +14,7 @@
     <a href="#requests" data-tab="requests">Мои заявки</a>
     <a href="#approve" data-tab="approve">На согласовании <span id="approve-count"></span></a>
     <a href="#balances" data-tab="balances" hidden>Остатки</a>
+    <a href="#routes" data-tab="routes" hidden>Маршруты</a>
     <a href="#settings" data-tab="settings" hidden>Настройки</a>
     <a href="#checks" data-tab="checks">Проверки</a>
 </nav>
@@ -51,6 +52,10 @@
     <div id="balances"></div>
 </section>
 
+<section id="tab-routes" hidden>
+    <div id="routes"></div>
+</section>
+
 <section id="tab-card" hidden>
     <p><a href="#" id="card-back">← назад</a></p>
     <div id="card"></div>
@@ -64,6 +69,12 @@
         <tr><th>Отдел кадров</th><td id="role-hr"></td><td><button type="button" id="pick-hr">Выбрать</button></td></tr>
     </table>
     <div id="user-picker" hidden></div>
+    <h2>Срок подачи заявки</h2>
+    <p class="hint">За сколько календарных дней до начала нужно подать заявку, если она идёт по цепочке по умолчанию. У маршрутов свой срок, он задаётся в шагах на вкладке «Маршруты».</p>
+    <div class="form">
+        <label>Не позже чем за, дней <input type="number" id="min-submit-days" min="0" max="365"></label>
+        <label class="check"><input type="checkbox" id="min-submit-exempt-unpaid"> Не проверять срок для отпуска без сохранения заработной платы (и по маршрутам)</label>
+    </div>
     <h2>Отмена утверждённого отсутствия</h2>
     <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем отдел кадров; после этого событие удаляется из календаря.</p>
     <div class="form">
@@ -106,6 +117,7 @@
 <script src="/assets/checks.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/checks.js') ?>"></script>
 <script src="/assets/calendar.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/calendar.js') ?>"></script>
 <script src="/assets/balance.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/balance.js') ?>"></script>
+<script src="/assets/routes.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/routes.js') ?>"></script>
 <script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
 <script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>
 </body>

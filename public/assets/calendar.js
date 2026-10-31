@@ -12,6 +12,7 @@ window.Kb24Calendar = (function () {
         head_review: 'st-pending',
         hr_review: 'st-progress',
         final_approval: 'st-progress',
+        route_review: 'st-progress',
         approved: 'st-approved',
         cancelling: 'st-approved'
     };

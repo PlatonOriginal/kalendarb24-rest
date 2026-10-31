@@ -119,3 +119,27 @@ button.danger { color: #ff5752; }
 .balances a { color: #2066b0; text-decoration: none; }
 #balances .kb-toolbar { margin-bottom: 12px; }
 .kb-toolbar .check { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; color: #525c69; }
+
+/* Маршруты согласования */
+.route { border: 1px solid #e6e9ec; border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; max-width: 900px; }
+.route.is-off, .route-steps li.is-off, .route-table tr.is-off { opacity: .55; }
+.route-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.route-head button { margin-left: auto; }
+.route .hint { margin: 0; }
+.route-steps { margin: 6px 0; padding-left: 22px; }
+.chip.accent { background: #e0efff; }
+.route-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 900px; }
+.route-cols label.check { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.route-cols select { width: 100%; }
+h3 { font-size: 14px; font-weight: 600; margin: 16px 0 4px; }
+.route-table { max-width: none; }
+.route-table td { padding: 4px 6px; }
+.route-table input[type="number"] { width: 70px; }
+.nowrap { white-space: nowrap; }
+.card-steps { list-style: none; padding: 0; margin: 0 0 8px; }
+.card-steps li { padding: 2px 0; }
+.step-mark { display: inline-block; width: 16px; text-align: center; }
+.step-done .step-mark { color: #2fc6a1; }
+.step-current .step-mark { color: #2066b0; }
+.step-rejected .step-mark { color: #ff5752; }
+.step-skipped, .step-next { color: #828b95; }

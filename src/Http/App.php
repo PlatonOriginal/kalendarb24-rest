@@ -20,6 +20,7 @@ use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\RejectReasons;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
+use Kb24Rest\Vacation\RouteService;
 use Kb24Rest\Vacation\Settings;
 use Kb24Rest\Vacation\VacationError;
 
@@ -56,6 +57,11 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/balances/save     (POST userId, days, asOf, comment, hireDate) остаток и дата приёма одного сотрудника (ОК, администратор)
  *   /api/balances/import   (POST rows: JSON [{line, userId, hireDate, days, asOf, comment}]) загрузка из CSV (ОК, администратор)
  *   /api/requests/mine     отдаёт ещё и мой остаток для подсказки в форме заявки
+ * Блок 8, маршруты (администратор и сотрудники из списка на вкладке «Маршруты»):
+ *   /api/routes            маршруты с шагами, кто их настраивает, срок подачи по умолчанию
+ *   /api/routes/save       (POST route: JSON {id, name, active, exclusive, kinds, departmentIds, steps}) сохранить маршрут
+ *   /api/routes/delete     (POST id) удалить маршрут
+ *   /api/routes/editors    (POST ids: через запятую) кто ещё настраивает маршруты
  */
 final class App
 {
@@ -79,6 +85,7 @@ final class App
         private readonly ?CalendarService $calendar = null,
         private readonly ?LimitService $limits = null,
         private readonly ?BalanceService $balances = null,
+        private readonly ?RouteService $routes = null,
     ) {
     }
 
@@ -179,6 +186,17 @@ final class App
                     (int)($post['department'] ?? 0),
                     (string)($post['from'] ?? ''),
                     (string)($post['to'] ?? ''),
+                )),
+                $path === '/api/routes' && $this->routes !== null => $this->json($this->routes->list($this->currentUser($server))),
+                $path === '/api/routes/save' && $this->isPost($server) && $this->routes !== null => $this->json($this->routes->save(
+                    $this->currentUser($server),
+                    (array)json_decode((string)($post['route'] ?? ''), true),
+                )),
+                $path === '/api/routes/delete' && $this->isPost($server) && $this->routes !== null
+                    => $this->json($this->routes->delete($this->currentUser($server), (int)($post['id'] ?? 0))),
+                $path === '/api/routes/editors' && $this->isPost($server) && $this->routes !== null => $this->json($this->routes->saveEditors(
+                    $this->currentUser($server),
+                    array_map('intval', array_filter(explode(',', (string)($post['ids'] ?? '')))),
                 )),
                 default => $this->notFound(),
             };
@@ -356,6 +374,7 @@ final class App
             'limits' => $user->isAdmin && $this->limits !== null ? $this->limitsByDepartment($user) : null,
             'calendar' => $this->calendar?->departments($user),
             'balances' => $this->balances !== null && $this->balances->canView($user),
+            'canEditRoutes' => $this->routes !== null && $this->routes->canEdit($user),
         ];
     }
 
@@ -437,6 +456,15 @@ final class App
                 throw new VacationError('Ежегодный отпуск: от 28 до 100 календарных дней');
             }
             $this->settings->setAnnualDays($user->portal, (int)$value);
+        }
+        if (isset($post['min_submit_days']))
+        {
+            $value = trim((string)$post['min_submit_days']);
+            if (!preg_match('/^\d+$/', $value))
+            {
+                throw new VacationError('Срок подачи: от 0 до 365 дней');
+            }
+            $this->settings->setMinSubmit($user->portal, (int)$value, ($post['min_submit_exempt_unpaid'] ?? '0') === '1');
         }
         if (isset($post['employees_see_other_departments']))
         {
