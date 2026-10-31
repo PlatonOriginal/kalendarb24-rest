@@ -15,6 +15,8 @@ final class RoleService
 {
     public const DIRECTOR = 'director';
     public const HR = 'hr';
+    /** Кроме администратора, маршруты согласования настраивают эти сотрудники */
+    public const ROUTE_EDITOR = 'route_editor';
 
     /** @var array<string, array<string, list<int>>> */
     private array $cache = [];
@@ -24,7 +26,7 @@ final class RoleService
     }
 
     /**
-     * @return array{director: ?int, hr: list<int>}
+     * @return array{director: ?int, hr: list<int>, routeEditors: list<int>}
      */
     public function roles(Portal $portal): array
     {
@@ -33,6 +35,7 @@ final class RoleService
         return [
             'director' => $byRole[self::DIRECTOR][0] ?? null,
             'hr' => $byRole[self::HR] ?? [],
+            'routeEditors' => $byRole[self::ROUTE_EDITOR] ?? [],
         ];
     }
 
@@ -43,7 +46,7 @@ final class RoleService
      */
     public function set(Portal $portal, string $role, array $userIds): void
     {
-        if (!in_array($role, [self::DIRECTOR, self::HR], true))
+        if (!in_array($role, [self::DIRECTOR, self::HR, self::ROUTE_EDITOR], true))
         {
             throw new VacationError('Неизвестная роль');
         }

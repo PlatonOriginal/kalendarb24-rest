@@ -132,7 +132,9 @@ final class Notifier implements AfterResponse
         $text = match ($item['event'])
         {
             'review' => $author . ' просит согласовать: ' . $what,
-            'step' => 'Ваша заявка согласована и теперь ' . (self::STEP[$request['status']] ?? 'на следующем шаге') . ': ' . $what,
+            'step' => 'Ваша заявка согласована и теперь ' . ($request['status'] === Status::ROUTE_REVIEW && $request['stepName'] !== ''
+                ? 'на шаге «' . $request['stepName'] . '»'
+                : (self::STEP[$request['status']] ?? 'на следующем шаге')) . ': ' . $what,
             'approved' => 'Ваша заявка утверждена: ' . $what,
             'rejected' => ($userId === $request['userId'] ? 'Ваша заявка отклонена' : 'Заявка, которую вы согласовали, отклонена')
                 . ($reason !== '' ? ' (' . $reason . ')' : '') . ': ' . ($userId === $request['userId'] ? '' : $author . ', ') . $what,

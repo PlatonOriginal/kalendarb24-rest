@@ -54,10 +54,10 @@
 
     /**
      * Открывает выбор и возвращает Promise со списком выбранных {id, name} или null, если выбор отменён.
-     * options: title, multiple, selected (список {id, name}).
+     * options: title, multiple, selected (список {id, name}), box (ID блока, по умолчанию user-picker).
      */
     function open(options) {
-        var box = el('user-picker');
+        var box = el(options.box || 'user-picker');
         var selected = (options.selected || []).slice();
 
         box.innerHTML = '<h2>' + esc(options.title) + '</h2>'

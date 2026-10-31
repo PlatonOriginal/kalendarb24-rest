@@ -17,10 +17,18 @@ final class Settings
      * Как в коробке: max_cancel_working_days по умолчанию 3, календарь других отделов сотрудникам не виден (0),
      * ежегодный отпуск 28 календарных дней за рабочий год.
      */
-    public const DEFAULTS = ['max_cancel_working_days' => 3, 'employees_see_other_departments' => 0, 'annual_days' => 28];
+    public const DEFAULTS = [
+        'max_cancel_working_days' => 3,
+        'employees_see_other_departments' => 0,
+        'annual_days' => 28,
+        // Цепочка по умолчанию: заявку подают не позже чем за столько дней до начала (в коробке по умолчанию 0)
+        'min_submit_days' => 0,
+        // Срок подачи не действует на отпуск без сохранения заработной платы
+        'min_submit_exempt_unpaid' => 0,
+    ];
 
     /** Настройки «да или нет»: хранятся как 0 и 1 */
-    public const FLAGS = ['employees_see_other_departments'];
+    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid'];
 
     /** @var array<string, array<string, int>> */
     private array $cache = [];
@@ -30,7 +38,7 @@ final class Settings
     }
 
     /**
-     * @return array{max_cancel_working_days: int, employees_see_other_departments: int, annual_days: int}
+     * @return array<string, int> ключи как в DEFAULTS
      */
     public function all(Portal $portal): array
     {
@@ -88,6 +96,26 @@ final class Settings
             throw new VacationError('Ежегодный отпуск: от 28 до 100 календарных дней');
         }
         $this->rest->call($portal, 'app.option.set', ['options' => ['annual_days' => $days]]);
+        unset($this->cache[$portal->memberId]);
+    }
+
+    public function minSubmitDays(Portal $portal): int
+    {
+        return $this->all($portal)['min_submit_days'];
+    }
+
+    public function minSubmitExemptUnpaid(Portal $portal): bool
+    {
+        return $this->all($portal)['min_submit_exempt_unpaid'] === 1;
+    }
+
+    public function setMinSubmit(Portal $portal, int $days, bool $exemptUnpaid): void
+    {
+        if ($days < 0 || $days > 365)
+        {
+            throw new VacationError('Срок подачи: от 0 до 365 дней');
+        }
+        $this->rest->call($portal, 'app.option.set', ['options' => ['min_submit_days' => $days, 'min_submit_exempt_unpaid' => $exemptUnpaid ? 1 : 0]]);
         unset($this->cache[$portal->memberId]);
     }
 

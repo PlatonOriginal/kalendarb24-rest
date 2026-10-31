@@ -5,6 +5,7 @@
         head_review: 'У руководителя',
         hr_review: 'В отделе кадров',
         final_approval: 'У директора',
+        route_review: 'На согласовании',
         approved: 'Утверждена',
         rejected: 'Отклонена',
         withdrawn: 'Отозвана',
@@ -26,6 +27,10 @@
         cancel_auto_approve: 'согласовал отмену автоматически (уже согласовал её раньше)',
         cancel_refuse: 'отказал в отмене'
     };
+    // Шаги маршрута в карточке: пройден, текущий, впереди, пропущен, на нём отказали
+    var STEP_MARK = { done: '✓', current: '●', next: '○', skipped: '–', rejected: '✕' };
+    var STEP_STATE = { done: 'согласовано', current: 'сейчас здесь', next: 'впереди', skipped: 'пропущен', rejected: 'отклонено' };
+    var STEP_KIND = { head: 'руководитель по структуре', hr: 'отдел кадров', director: 'директор' };
 
     var state = { me: null, names: {}, checksDone: false };
 
@@ -105,11 +110,13 @@
         return formatDate(request.dateFrom) + ' — ' + formatDate(request.dateTo);
     }
 
-    function status(code) {
-        return '<span class="status ' + esc(code) + '">' + esc(STATUS[code] || code) + '</span>';
+    // По маршруту вместо «На согласовании» показываем шаг: «На шаге «Юрист»»
+    function status(code, request) {
+        var text = code === 'route_review' && request && request.stepName ? 'На шаге «' + request.stepName + '»' : (STATUS[code] || code);
+        return '<span class="status ' + esc(code) + '">' + esc(text) + '</span>';
     }
 
-    var TABS = ['calendar', 'requests', 'approve', 'balances', 'settings', 'checks'];
+    var TABS = ['calendar', 'requests', 'approve', 'balances', 'routes', 'settings', 'checks'];
 
     function openTab(tab) {
         if (TABS.indexOf(tab) < 0) {
@@ -126,6 +133,8 @@
             window.Kb24Calendar.show();
         } else if (tab === 'balances') {
             window.Kb24Balance.show();
+        } else if (tab === 'routes') {
+            window.Kb24Routes.show();
         } else if (tab === 'requests') {
             loadMine();
         } else if (tab === 'approve') {
@@ -170,7 +179,7 @@
             renderBalanceHint();
             return loadNames(data.items.map(function (r) { return r.approverId; })).then(function () {
                 fillRows('my-requests', data.items, function (r) {
-                    return [esc(r.id), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status), esc(r.approverId ? name(r.approverId) : '')];
+                    return [esc(r.id), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status, r), esc(r.approverId ? name(r.approverId) : '')];
                 }, 'Заявок пока нет');
             });
         }).catch(showError);
@@ -181,7 +190,7 @@
             el('approve-count').textContent = data.items.length ? '(' + data.items.length + ')' : '';
             return loadNames(data.items.map(function (r) { return r.userId; })).then(function () {
                 fillRows('approve-requests', data.items, function (r) {
-                    return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status)];
+                    return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status, r)];
                 }, 'Нет заявок, которые ждут вашего решения');
             });
         }).catch(showError);
@@ -195,6 +204,7 @@
         request.then(function (data) {
             var r = data.request;
             var ids = [r.userId, r.approverId].concat(data.history.map(function (h) { return h.actorId; }));
+            (data.route ? data.route.steps : []).forEach(function (step) { ids.push(step.userId, step.actorId); });
             return loadNames(ids).then(function () {
                 renderCard(data);
                 TABS.forEach(function (name) { el('tab-' + name).hidden = true; });
@@ -224,7 +234,11 @@
         var reasons = state.me.reasons;
         var history = data.history.map(function (h) {
             var reason = h.reason ? ': ' + (reasons[h.reason] || h.reason) : '';
-            return '<li>' + esc(name(h.actorId)) + ' ' + esc(ACTION[h.action] || h.action) + esc(reason) + '</li>';
+            if (h.action === 'reroute') {
+                return '<li>Шаг «' + esc(h.stepName) + '»: согласующий не найден, заявка передана в отдел кадров — ' + esc(name(h.actorId)) + '</li>';
+            }
+            return '<li>' + esc(name(h.actorId)) + ' ' + esc(ACTION[h.action] || h.action)
+                + (h.stepName ? ' на шаге «' + esc(h.stepName) + '»' : '') + esc(reason) + '</li>';
         }).join('');
         var reasonOptions = Object.keys(reasons).map(function (code) {
             return '<option value="' + esc(code) + '">' + esc(reasons[code]) + '</option>';
@@ -239,7 +253,7 @@
             + '<dt>Вид</dt><dd>' + esc(state.me.kinds[r.kind] || r.kind) + '</dd>'
             + '<dt>Даты</dt><dd>' + esc(period(r)) + '</dd>'
             + '<dt>Дней</dt><dd>' + esc(r.days) + '</dd>'
-            + '<dt>Статус</dt><dd>' + status(r.status)
+            + '<dt>Статус</dt><dd>' + status(r.status, r)
             + (r.status === 'cancelling' ? ', ' + esc(CANCEL_STEP[r.cancelStep] || '') : '')
             + (r.approverId ? ', решение принимает ' + esc(name(r.approverId)) : '') + '</dd>'
             + (r.cancelReason && (r.status === 'cancelling' || r.status === 'cancelled') ? '<dt>Причина отмены</dt><dd>' + esc(r.cancelReason) + '</dd>' : '')
@@ -256,6 +270,8 @@
             + (chatWith && chatWith !== state.me.userId ? '<button type="button" data-chat="' + esc(chatWith) + '">Написать в чат: ' + esc(name(chatWith)) + '</button>' : '')
             + '</div>'
             + (data.cancelHint ? '<p class="hint">' + esc(data.cancelHint) + '</p>' : '')
+            + (data.rejectBlocked ? '<p class="hint">' + esc(data.rejectBlocked) + '</p>' : '')
+            + routeSteps(data.route)
             + '<h2>История</h2><ul>' + history + '</ul>'
             + '</div>';
 
@@ -293,6 +309,18 @@
         });
     }
 
+    function routeSteps(route) {
+        if (!route) {
+            return '';
+        }
+        return '<h2>Маршрут «' + esc(route.name) + '»</h2><ol class="card-steps">' + route.steps.map(function (step) {
+            var who = step.actorId ? name(step.actorId) : (step.kind === 'user' ? name(step.userId) : STEP_KIND[step.kind] || '');
+            return '<li class="step-' + esc(step.state) + '"><span class="step-mark">' + STEP_MARK[step.state] + '</span> <b>' + esc(step.name) + '</b> — '
+                + esc(who) + ', ' + esc(STEP_STATE[step.state])
+                + (!step.canReject ? ', только согласует' : step.rejectUntil ? ', отклонить можно до ' + esc(formatDate(step.rejectUntil)) : '') + '</li>';
+        }).join('') + '</ol>';
+    }
+
     function renderRoles() {
         var roles = state.me.roles;
         loadNames([roles.director].concat(roles.hr)).then(function () {
@@ -306,13 +334,17 @@
         el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
         el('see-other-departments').checked = !!(state.me.settings && state.me.settings.employees_see_other_departments);
         el('annual-days').value = state.me.settings ? state.me.settings.annual_days : '';
+        el('min-submit-days').value = state.me.settings ? state.me.settings.min_submit_days : '';
+        el('min-submit-exempt-unpaid').checked = !!(state.me.settings && state.me.settings.min_submit_exempt_unpaid);
     }
 
     function saveOptions() {
         api('/api/settings/options', {
             max_cancel_working_days: el('cancel-days').value,
             employees_see_other_departments: el('see-other-departments').checked ? '1' : '0',
-            annual_days: el('annual-days').value
+            annual_days: el('annual-days').value,
+            min_submit_days: el('min-submit-days').value,
+            min_submit_exempt_unpaid: el('min-submit-exempt-unpaid').checked ? '1' : '0'
         }).then(function (settings) {
             state.me.settings = settings;
             renderOptions();
@@ -446,6 +478,7 @@
             state.me = me;
             document.querySelector('[data-tab="settings"]').hidden = !me.isAdmin;
             document.querySelector('[data-tab="balances"]').hidden = !me.balances;
+            document.querySelector('[data-tab="routes"]').hidden = !me.canEditRoutes;
             bindForm();
             window.Kb24Balance.init({
                 api: api,
@@ -455,6 +488,16 @@
                 name: name,
                 rememberName: function (id, text) { state.names[id] = text; },
                 showError: showError
+            });
+            window.Kb24Routes.init({
+                api: api,
+                esc: esc,
+                me: function () { return state.me; },
+                loadNames: loadNames,
+                name: name,
+                rememberName: function (id, text) { state.names[id] = text; },
+                showError: showError,
+                showMessage: showMessage
             });
             window.Kb24Calendar.init({
                 api: api,
