@@ -833,7 +833,7 @@ final class RequestServiceTest extends TestCase
     public function testImportReportsBadLinesAndSavesTheRest(): void
     {
         $result = $this->balances->import($this->user(40), [
-            ['line' => 2, 'userId' => self::ACCOUNTANT, 'days' => '10', 'asOf' => '01.10.2026', 'hireDate' => '15.03.2020'],
+            ['line' => 2, 'userId' => self::ACCOUNTANT, 'days' => '10', 'asOf' => '01.10.26', 'hireDate' => '15.03.20'],
             ['line' => 3, 'userId' => 0, 'days' => '10'],
             ['line' => 4, 'userId' => 100, 'days' => 'много'],
             ['line' => 5, 'userId' => 200, 'days' => '3', 'hireDate' => '01.01.2030'],
@@ -845,6 +845,7 @@ final class RequestServiceTest extends TestCase
             'Строка 4: Остаток укажите числом дней от −365 до 365',
             'Строка 5: Проверьте дату приёма на работу',
         ], $result['errors']);
-        self::assertSame(10.0, $this->balances->get($this->portal, self::ACCOUNTANT)['days']);
+        // Excel пересохраняет даты с двузначным годом
+        self::assertSame(['2026-10-01', 10.0], [$this->balances->get($this->portal, self::ACCOUNTANT)['asOf'], $this->balances->get($this->portal, self::ACCOUNTANT)['days']]);
     }
 }
