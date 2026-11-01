@@ -118,7 +118,7 @@
         return '<span class="status ' + esc(code) + '">' + esc(text) + '</span>';
     }
 
-    var TABS = ['calendar', 'requests', 'approve', 'balances', 'routes', 'settings', 'checks'];
+    var TABS = ['calendar', 'requests', 'approve', 'acks', 'balances', 'routes', 'settings', 'checks'];
 
     function openTab(tab) {
         if (TABS.indexOf(tab) < 0) {
@@ -139,7 +139,7 @@
             window.Kb24Routes.show();
         } else if (tab === 'requests') {
             loadMine();
-        } else if (tab === 'approve') {
+        } else if (tab === 'approve' || tab === 'acks') {
             loadToApprove();
         } else if (tab === 'settings') {
             renderRoles();
@@ -190,16 +190,15 @@
     function loadToApprove() {
         api('/api/requests/approve').then(function (data) {
             var acks = data.acks || [];
-            var count = data.items.length + acks.length;
-            el('approve-count').textContent = count ? '(' + count + ')' : '';
+            el('approve-count').textContent = data.items.length ? '(' + data.items.length + ')' : '';
+            el('ack-count').textContent = acks.length ? '(' + acks.length + ')' : '';
             return loadNames(data.items.concat(acks).map(function (r) { return r.userId; })).then(function () {
                 fillRows('approve-requests', data.items, function (r) {
                     return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status, r)];
                 }, 'Нет заявок, которые ждут вашего решения');
-                el('acks-block').hidden = !acks.length;
                 fillRows('ack-requests', acks, function (r) {
                     return [esc(r.id), esc(name(r.userId)), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), esc(ACK_EVENT[r.ack.event] || r.ack.event)];
-                }, '');
+                }, 'Нет заявок, которые ждут вашего ознакомления');
             });
         }).catch(showError);
     }
@@ -301,6 +300,7 @@
                 button.disabled = true;
                 api('/api/requests/' + r.id + '/' + action, payload).then(function () {
                     openCard(r.id);
+                    loadToApprove();
                     showMessage({
                         approve: 'Заявка согласована',
                         reject: 'Заявка отклонена',
