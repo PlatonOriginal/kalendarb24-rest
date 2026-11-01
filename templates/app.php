@@ -13,6 +13,7 @@
     <a href="#calendar" data-tab="calendar">Календарь</a>
     <a href="#requests" data-tab="requests">Мои заявки</a>
     <a href="#approve" data-tab="approve">На согласовании <span id="approve-count"></span></a>
+    <a href="#acks" data-tab="acks">На ознакомлении <span id="ack-count"></span></a>
     <a href="#balances" data-tab="balances" hidden>Остатки</a>
     <a href="#routes" data-tab="routes" hidden>Маршруты</a>
     <a href="#settings" data-tab="settings" hidden>Настройки</a>
@@ -46,14 +47,15 @@
         <thead><tr><th>№</th><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Шаг</th></tr></thead>
         <tbody></tbody>
     </table>
-    <div id="acks-block" hidden>
-        <h2>Ждут вашего ознакомления</h2>
-        <p class="hint">Вас указали в маршруте получателем результата: откройте заявку и подтвердите, что ознакомились.</p>
-        <table id="ack-requests" class="list">
-            <thead><tr><th>№</th><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Результат</th></tr></thead>
-            <tbody></tbody>
-        </table>
-    </div>
+</section>
+
+<section id="tab-acks" hidden>
+    <h2>Ждут вашего ознакомления</h2>
+    <p class="hint">Вас указали в маршруте получателем результата: откройте заявку и подтвердите, что ознакомились. Пока не подтвердите, каждый рабочий день до начала отсутствия будет приходить напоминание.</p>
+    <table id="ack-requests" class="list">
+        <thead><tr><th>№</th><th>Сотрудник</th><th>Даты</th><th>Вид</th><th>Дней</th><th>Результат</th></tr></thead>
+        <tbody></tbody>
+    </table>
 </section>
 
 <section id="tab-balances" hidden>
