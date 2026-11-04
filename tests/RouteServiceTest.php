@@ -11,6 +11,7 @@ use Kb24Rest\Portal\CurrentUser;
 use Kb24Rest\Portal\Portal;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\DashboardService;
 use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
@@ -39,6 +40,7 @@ final class RouteServiceTest extends TestCase
     private RequestService $service;
     private Notifier $notifier;
     private WatchService $watch;
+    private DashboardService $dashboard;
     private Portal $portal;
     /** «Сегодня» для напоминаний: меняется в тестах напоминаний */
     private string $today = '2026-10-27';
@@ -74,6 +76,7 @@ final class RouteServiceTest extends TestCase
             $storage, $structure, $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), $allowSelfApproval,
             $this->notifier, null, $settings, null, null, $this->routes, $this->watch,
         );
+        $this->dashboard = new DashboardService($storage, $structure, $this->roles, null, new \DateTimeImmutable('2026-10-28 10:00:00+03:00'));
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -521,5 +524,28 @@ final class RouteServiceTest extends TestCase
     {
         $this->expectExceptionMessage('Уведомление 1: выберите, о чём уведомлять');
         $this->saveRoute(['steps' => [$this->step('Директор', 'director')], 'watchers' => [['kind' => 'hr', 'events' => []]]]);
+    }
+
+    public function testDashboardFollowsRolesAndShowsSpeedToDirector(): void
+    {
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->approve(self::ACCOUNTING_HEAD, $request['id']);
+        $this->rebuild();
+
+        $data = $this->dashboard->build($this->user(self::DIRECTOR), 2026);
+        $employee = array_values(array_filter($data['employees'], static fn(array $e) => $e['id'] === self::ACCOUNTANT))[0];
+        self::assertSame(['planned', false, 5], [$employee['rest'], $employee['longPart'], $employee['vacationDays']]);
+        self::assertSame(1, $data['load']['company'][10]['peak'], 'ноябрь');
+        self::assertSame(4, array_column($data['departments'], 'headcount', 'id')[14]);
+        $steps = $data['speed']['steps'];
+        self::assertSame(['Руководитель', self::ACCOUNTING_HEAD, 0.0], [$steps[0]['step'], $steps[0]['approverId'], $steps[0]['hours']]);
+        self::assertSame('Отдел кадров', $steps[1]['step']);
+        self::assertNull($steps[1]['hours']);
+        self::assertSame(24.0, $steps[1]['waitingHours']);
+
+        // Отдел кадров видит дашборд без скорости согласования, остальным он закрыт
+        self::assertNull($this->dashboard->build($this->user(40), 2026)['speed']);
+        $this->expectExceptionMessage('Нет доступа к вкладке «Дашборд»');
+        $this->dashboard->build($this->user(self::SALES_MANAGER), 2026);
     }
 }

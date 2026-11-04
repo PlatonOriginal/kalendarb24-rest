@@ -63,6 +63,31 @@ final class BalanceService
     }
 
     /**
+     * Доступный остаток на сегодня для дашборда: только у тех, кому он внесён.
+     *
+     * @param list<array<string, mixed>> $requests все заявки (RequestService::toRequest)
+     * @return array<int, float>
+     */
+    public function availableFor(Portal $portal, array $requests): array
+    {
+        $byUser = [];
+        foreach ($requests as $request)
+        {
+            $byUser[$request['userId']][] = $request;
+        }
+        $result = [];
+        foreach ($this->records($portal) as $userId => $record)
+        {
+            if ($record['days'] !== null)
+            {
+                $result[$userId] = $this->compute($portal, $record, $byUser[$userId] ?? [], $this->today)['available'];
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Все внесённые остатки и даты приёма. Сотрудников и их ФИО браузер берёт из портала сам.
      */
     public function list(CurrentUser $user): array

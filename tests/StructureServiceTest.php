@@ -45,19 +45,4 @@ final class StructureServiceTest extends TestCase
         self::assertSame([3, 5], $departments);
         self::assertSame(['ID', 'UF_DEPARTMENT'], $http->requests[0]['params']['select']);
     }
-
-    public function testHumanResourcesUsesRestV3(): void
-    {
-        $http = new FakeTransport([
-            ['result' => ['items' => [['id' => 4, 'name' => 'Продажи', 'parentId' => 1, 'accessCode' => 'DR2']]]],
-            ['result' => ['item' => ['id' => 4, 'members' => [['userId' => 200, 'role' => 'MEMBER_HEAD'], ['userId' => 201, 'role' => 'MEMBER_EMPLOYEE']]]]],
-        ]);
-
-        $nodes = $this->service($http)->humanResourcesHeads($this->portal());
-
-        self::assertSame('https://test.bitrix24.ru/rest/api/humanresources.node.list', $http->requests[0]['url']);
-        self::assertSame('POST_JSON', $http->requests[0]['method']);
-        self::assertSame([200], $nodes[0]['heads']);
-        self::assertSame('DR2', $nodes[0]['accessCode']);
-    }
 }

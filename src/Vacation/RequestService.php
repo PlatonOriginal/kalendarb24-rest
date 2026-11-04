@@ -786,7 +786,7 @@ final class RequestService
      *
      * @return array{id: int, name: string, steps: list<array<string, mixed>>}|null
      */
-    private static function routeData(array $item): ?array
+    public static function routeData(array $item): ?array
     {
         $data = json_decode((string)($item['PROPERTY_VALUES']['ROUTE_DATA'] ?? ''), true);
 

@@ -80,51 +80,31 @@ final class StructureService
     }
 
     /**
+     * Все активные сотрудники и их основной отдел (первый в UF_DEPARTMENT). Только ID, без ФИО.
+     *
+     * @return array<int, int> ID сотрудника => отдел
+     */
+    public function activeUsers(Portal $portal): array
+    {
+        $users = [];
+        foreach ($this->rest->listAll($portal, 'user.get', ['filter' => ['ACTIVE' => true], 'select' => ['ID', 'UF_DEPARTMENT']]) as $row)
+        {
+            $departments = array_map('intval', (array)($row['UF_DEPARTMENT'] ?? []));
+            if ($departments !== [])
+            {
+                $users[(int)$row['ID']] = $departments[0];
+                $this->userDepartments[(int)$row['ID']] = $departments;
+            }
+        }
+
+        return $users;
+    }
+
+    /**
      * @return list<int>
      */
     public function headChain(Portal $portal, OrgChart $chart, int $userId): array
     {
         return $chart->headChain($userId, fn(int $id): ?int => $this->departmentsOf($portal, $id)[0] ?? null);
-    }
-
-    /**
-     * Для сравнения: руководители по новой структуре (humanresources, REST 3.0).
-     * Нужен scope humanresources. Возвращает узлы с кодом доступа и ID руководителей.
-     *
-     * @return list<array{id: int, name: string, accessCode: string, parentId: ?int, heads: list<int>}>
-     */
-    public function humanResourcesHeads(Portal $portal, int $limit = 20): array
-    {
-        $list = (array)$this->rest->callV3($portal, 'humanresources.node.list', [
-            'type' => 'DEPARTMENT',
-            'select' => ['id', 'name', 'parentId', 'accessCode'],
-            'pagination' => ['page' => 1, 'limit' => $limit],
-        ]);
-
-        $nodes = [];
-        foreach ((array)($list['items'] ?? []) as $item)
-        {
-            $node = (array)$this->rest->callV3($portal, 'humanresources.node.get', [
-                'id' => (int)$item['id'],
-                'select' => ['id', 'members'],
-            ]);
-            $heads = [];
-            foreach ((array)($node['item']['members'] ?? $node['members'] ?? []) as $member)
-            {
-                if (($member['role'] ?? '') === 'MEMBER_HEAD')
-                {
-                    $heads[] = (int)$member['userId'];
-                }
-            }
-            $nodes[] = [
-                'id' => (int)$item['id'],
-                'name' => (string)($item['name'] ?? ''),
-                'accessCode' => (string)($item['accessCode'] ?? ''),
-                'parentId' => isset($item['parentId']) ? (int)$item['parentId'] : null,
-                'heads' => $heads,
-            ];
-        }
-
-        return $nodes;
     }
 }
