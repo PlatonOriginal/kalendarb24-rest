@@ -1,6 +1,7 @@
 /**
  * Вкладка «Доступ»: роли с произвольными названиями. Роль открывает вкладки приложения и задаёт, заявки каких отделов
  * видны. Что можно сделать с заявкой, зависит от участия в ней (автор, согласующий, получатель результата), а не от роли.
+ * Роли правятся прямо в списке, каждая карточка сохраняется своей кнопкой.
  * Сервер хранит только ID сотрудников: ФИО запрашивает браузер.
  */
 window.Kb24Access = (function () {
@@ -9,10 +10,12 @@ window.Kb24Access = (function () {
     var LEVELS = { none: 'Скрыта', view: 'Просмотр', edit: 'Изменение' };
 
     var ctx = null;
-    var view = { data: null };
+    // roles — правки в карточках до сохранения, dirty — какие карточки изменены
+    var view = { data: null, roles: [], dirty: {} };
 
     function root() { return document.getElementById('access'); }
     function esc(text) { return ctx.esc(text); }
+    function copy(value) { return JSON.parse(JSON.stringify(value)); }
 
     function departmentName(id) {
         var found = view.data.departments.filter(function (d) { return d.id === id; })[0];
@@ -23,6 +26,8 @@ window.Kb24Access = (function () {
         root().innerHTML = '<p class="hint">Загрузка…</p>';
         ctx.api('/api/access').then(function (data) {
             view.data = data;
+            view.roles = copy(data.roles);
+            view.dirty = {};
             var ids = [];
             data.roles.forEach(function (role) { ids = ids.concat(role.userIds); });
             return ctx.loadNames(ids);
@@ -32,146 +37,218 @@ window.Kb24Access = (function () {
         });
     }
 
-    function members(role) {
-        if (role.base) {
-            return '<span class="hint">все сотрудники</span>';
-        }
-        var chips = role.userIds.map(function (id) { return '<span class="chip">' + esc(ctx.name(id)) + '</span>'; })
-            .concat(role.departmentIds.map(function (id) { return '<span class="chip accent">' + esc(departmentName(id)) + ' с подотделами</span>'; }));
-        return chips.length ? chips.join(' ') : '<span class="hint">никого</span>';
-    }
-
-    function tabsText(role) {
-        var tabs = view.data.tabs;
-        var open = Object.keys(tabs).filter(function (tab) { return role.tabs[tab] !== 'none'; }).map(function (tab) {
-            return tabs[tab].name + (role.tabs[tab] === 'edit' ? ' (изменение)' : '');
-        });
-        return open.length ? open.join(', ') : 'нет';
-    }
-
     function draw() {
         var data = view.data;
-        root().innerHTML = (data.canEdit ? '<p><button type="button" class="primary" data-role="add">+ Новая роль</button></p>'
-                : '<p class="hint">Вам доступен только просмотр ролей.</p>')
-            + '<p class="hint">Роль открывает вкладки приложения и задаёт, заявки каких отделов видны в календаре и в карточках. '
-            + '«Мои заявки», «На согласовании» и «На ознакомлении» открыты всем: там только заявки, в которых сотрудник участвует. '
-            + 'Что можно сделать с заявкой, зависит от участия в ней: автор подаёт и отзывает, согласующий согласует или отклоняет, получатель результата подтверждает ознакомление. '
-            + 'Руководитель всегда видит заявки отделов, которыми руководит. '
-            + 'Если сотрудник в нескольких ролях, по каждой вкладке и по видимости берётся более широкое право. '
-            + 'Администратор портала может всё. Роли можно указывать в шагах маршрутов на вкладке «Маршруты»; названия ролей и шагов не обязаны совпадать.</p>'
-            + '<div class="routes">' + data.roles.map(function (role, index) {
-                return '<div class="route"><div class="route-head"><b>' + esc(role.name) + '</b>'
-                    + (role.base ? ' <span class="chip">есть у всех</span>' : '')
-                    + (data.canEdit ? ' <button type="button" data-edit="' + index + '">Изменить</button>' : '') + '</div>'
-                    + '<div>' + members(role) + '</div>'
-                    + '<div class="hint">Вкладки: ' + esc(tabsText(role)) + ' · Заявки и календарь: ' + esc(data.scopes[role.scope]) + '</div></div>';
-            }).join('') + '</div>';
-
-        if (data.canEdit) {
-            root().querySelector('[data-role="add"]').addEventListener('click', function () {
+        root().innerHTML = '<p class="hint">«Мои заявки», «На согласовании» и «На ознакомлении» открыты всем. Участник заявки видит её всегда, '
+            + 'руководитель — заявки и календарь отделов, которыми руководит, с подотделами. Администратор портала может всё. '
+            + 'Если у сотрудника несколько ролей, по каждому праву берётся самое широкое.</p>'
+            + '<details class="acc-more"><summary>Как устроен доступ</summary><p class="hint">Роль открывает вкладки приложения и задаёт, заявки каких отделов видны в календаре, '
+            + 'в карточках и на дашборде. Что можно сделать с заявкой, зависит от участия в ней: автор подаёт и отзывает, согласующий согласует или отклоняет, '
+            + 'получатель результата подтверждает ознакомление. Роли указываются в шагах маршрутов на вкладке «Маршруты»; названия ролей и шагов не обязаны совпадать. '
+            + 'Роль, указанную в маршрутах, удалить нельзя. Изменения доступа к вкладкам сотрудники увидят, когда заново откроют приложение.</p></details>'
+            + (data.canEdit ? '' : '<p class="hint">Вам доступен только просмотр ролей.</p>')
+            + '<div data-role="list">' + view.roles.map(function (role, index) { return '<div class="acc-role" data-index="' + index + '"></div>'; }).join('') + '</div>'
+            + (data.canEdit ? '<p><button type="button" data-role="add">+ Новая роль</button></p>' : '');
+        view.roles.forEach(function (role, index) { drawRole(index); });
+        var add = root().querySelector('[data-role="add"]');
+        if (add) {
+            add.addEventListener('click', function () {
                 var tabs = {};
                 Object.keys(data.tabs).forEach(function (tab) { tabs[tab] = tab === 'calendar' ? 'view' : 'none'; });
-                openEditor({ id: 0, name: '', base: false, legacy: '', userIds: [], departmentIds: [], tabs: tabs, scope: 'dept' });
+                view.roles.push({ id: 0, name: '', base: false, legacy: '', userIds: [], departmentIds: [], tabs: tabs, scope: 'dept' });
+                view.dirty[view.roles.length - 1] = true;
+                draw();
+                var cards = root().querySelectorAll('.acc-role');
+                cards[cards.length - 1].querySelector('[name="name"]').focus();
             });
         }
-        root().querySelectorAll('[data-edit]').forEach(function (button) {
-            button.addEventListener('click', function () {
-                openEditor(JSON.parse(JSON.stringify(data.roles[Number(button.dataset.edit)])));
-            });
-        });
         BX24.fitWindow();
     }
 
-    function openEditor(role) {
-        var data = view.data;
-        root().innerHTML = '<h2>' + (role.id ? 'Роль «' + esc(role.name) + '»' : 'Новая роль') + '</h2>'
-            + '<div class="form route-form"><label>Название <input name="name" maxlength="100" size="40" value="' + esc(role.name) + '" placeholder="Например, «Кадровая служба»"></label></div>'
-            + (role.base ? '<p class="hint">Эта роль есть у всех сотрудников, состав у неё не задаётся.</p>' : '<div class="route-cols">'
-                + '<div><h3>Сотрудники</h3><p data-role="users"></p><p><button type="button" data-role="pick">Выбрать сотрудников</button></p></div>'
-                + '<div><h3>Отделы</h3><p class="hint">Все сотрудники отдела и его подотделов. Несколько — с Ctrl или ⌘.</p>'
-                + '<select name="departments" multiple size="8">' + data.departments.map(function (d) {
-                    return '<option value="' + esc(d.id) + '"' + (role.departmentIds.indexOf(d.id) !== -1 ? ' selected' : '') + '>'
-                        + new Array(d.depth + 1).join('   ') + esc(d.name) + '</option>';
-                }).join('') + '</select></div></div>')
-            + '<h3>Вкладки</h3><table class="route-table"><thead><tr><th>Вкладка</th><th>Доступ</th></tr></thead><tbody>'
-            + Object.keys(data.tabs).map(function (tab) {
-                return '<tr><td>' + esc(data.tabs[tab].name) + '</td><td><select name="tab-' + esc(tab) + '">' + data.tabs[tab].levels.map(function (level) {
-                    return '<option value="' + level + '"' + (role.tabs[tab] === level ? ' selected' : '') + '>' + esc(LEVELS[level]) + '</option>';
-                }).join('') + '</select></td></tr>';
-            }).join('') + '</tbody></table>'
-            + '<h3>Чьи заявки видны</h3><p class="hint">Кроме своих и тех, в которых сотрудник участвует. Так же ограничены отделы в календаре.</p>'
-            + '<div class="form"><select name="scope">' + Object.keys(data.scopes).map(function (code) {
-                return '<option value="' + code + '"' + (role.scope === code ? ' selected' : '') + '>' + esc(data.scopes[code]) + '</option>';
-            }).join('') + '</select></div>'
-            + '<div class="actions"><button type="button" class="primary" data-role="save">Сохранить</button>'
-            + '<button type="button" data-role="close">Отмена</button>'
-            + (role.id && !role.base ? '<button type="button" class="danger" data-role="delete">Удалить роль</button>' : '') + '</div>';
+    function select(name, options, value, disabled) {
+        return '<select name="' + esc(name) + '"' + (disabled ? ' disabled' : '') + '>' + options.map(function (o) {
+            return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+        }).join('') + '</select>';
+    }
 
-        function drawUsers() {
-            var holder = root().querySelector('[data-role="users"]');
-            if (holder) {
-                holder.innerHTML = role.userIds.length
-                    ? role.userIds.map(function (id) { return '<span class="chip">' + esc(ctx.name(id)) + '</span>'; }).join(' ')
-                    : '<span class="hint">не выбраны</span>';
+    function drawRole(index) {
+        var data = view.data;
+        var role = view.roles[index];
+        var edit = data.canEdit;
+        var card = root().querySelector('.acc-role[data-index="' + index + '"]');
+        var chip = function (text, attr) {
+            return '<span class="chip">' + esc(text) + (edit ? ' <button type="button" class="chip-x" ' + attr + ' title="Убрать">×</button>' : '') + '</span>';
+        };
+        var departments = data.departments.filter(function (d) { return role.departmentIds.indexOf(d.id) === -1; });
+
+        card.innerHTML = '<div class="acc-head">'
+            + (edit ? '<input name="name" maxlength="100" value="' + esc(role.name) + '" placeholder="Название, например «Кадровая служба»">' : '<b>' + esc(role.name) + '</b>')
+            + (role.base ? '<span class="hint">есть у каждого сотрудника портала; удалить нельзя, можно переименовать и расширить</span>' : '')
+            + (edit ? '<span class="acc-actions">'
+                + '<button type="button" class="primary" data-role="save"' + (view.dirty[index] ? '' : ' disabled') + '>Сохранить</button>'
+                + (view.dirty[index] && role.id ? '<button type="button" data-role="reset">Отменить</button>' : '')
+                + (!role.base ? '<button type="button" class="danger" data-role="delete">' + (role.id ? 'Удалить' : 'Убрать') + '</button>' : '')
+                + '</span>' : '')
+            + '</div>'
+            + (role.base ? '' : '<div class="acc-members">'
+                + '<div><span class="acc-label">Сотрудники</span><div class="acc-chips">'
+                + role.userIds.map(function (id) { return chip(ctx.name(id), 'data-user="' + esc(id) + '"'); }).join(' ')
+                + (edit ? ' <button type="button" class="kb-link" data-role="pick">+ сотрудник</button>' : (role.userIds.length ? '' : '<span class="hint">нет</span>'))
+                + '</div></div>'
+                + '<div><span class="acc-label">Отделы (все сотрудники отдела и подотделов)</span><div class="acc-chips">'
+                + role.departmentIds.map(function (id) { return chip(departmentName(id), 'data-dept="' + esc(id) + '"'); }).join(' ')
+                + (edit && departments.length ? ' <select name="add-dept" class="acc-add"><option value="">+ отдел</option>' + departments.map(function (d) {
+                    return '<option value="' + esc(d.id) + '">' + new Array(d.depth + 1).join('   ') + esc(d.name) + '</option>';
+                }).join('') + '</select>' : (role.departmentIds.length || edit ? '' : '<span class="hint">нет</span>'))
+                + '</div></div></div>')
+            + '<div class="acc-grid">' + Object.keys(data.tabs).map(function (tab) {
+                return '<label><span class="acc-label">' + esc(data.tabs[tab].name) + '</span>'
+                    + select('tab-' + tab, data.tabs[tab].levels.map(function (level) { return [level, LEVELS[level]]; }), role.tabs[tab], !edit) + '</label>';
+            }).join('')
+            + '<label><span class="acc-label">Чьи заявки и какой календарь видит</span>'
+            + select('scope', Object.keys(data.scopes).map(function (code) { return [code, data.scopes[code]]; }), role.scope, !edit) + '</label>'
+            + '</div>';
+
+        if (!edit) {
+            return;
+        }
+        var changed = function () {
+            if (!view.dirty[index]) {
+                view.dirty[index] = true;
+                drawRole(index);
             }
             BX24.fitWindow();
+        };
+        card.querySelector('[name="name"]').addEventListener('input', function (e) {
+            role.name = e.target.value;
+            if (!view.dirty[index]) {
+                view.dirty[index] = true;
+                var save = card.querySelector('[data-role="save"]');
+                save.disabled = false;
+            }
+        });
+        card.querySelectorAll('.acc-grid select').forEach(function (field) {
+            field.addEventListener('change', function () {
+                if (field.name === 'scope') {
+                    role.scope = field.value;
+                } else {
+                    role.tabs[field.name.replace('tab-', '')] = field.value;
+                }
+                changed();
+            });
+        });
+        card.querySelectorAll('[data-user]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                role.userIds = role.userIds.filter(function (id) { return id !== Number(button.dataset.user); });
+                view.dirty[index] = true;
+                drawRole(index);
+            });
+        });
+        card.querySelectorAll('[data-dept]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                role.departmentIds = role.departmentIds.filter(function (id) { return id !== Number(button.dataset.dept); });
+                view.dirty[index] = true;
+                drawRole(index);
+            });
+        });
+        var addDept = card.querySelector('[name="add-dept"]');
+        if (addDept) {
+            addDept.addEventListener('change', function () {
+                if (addDept.value) {
+                    role.departmentIds.push(Number(addDept.value));
+                    view.dirty[index] = true;
+                    drawRole(index);
+                }
+            });
         }
-
-        var pickButton = root().querySelector('[data-role="pick"]');
-        if (pickButton) {
-            pickButton.addEventListener('click', function () {
+        var pick = card.querySelector('[data-role="pick"]');
+        if (pick) {
+            pick.addEventListener('click', function () {
                 var selected = role.userIds.map(function (id) { return { id: id, name: ctx.name(id) }; });
-                window.Kb24Picker.open({ title: 'Сотрудники роли', multiple: true, selected: selected, anchor: pickButton.parentNode }).then(function (users) {
+                window.Kb24Picker.open({ title: 'Сотрудники роли', multiple: true, selected: selected, anchor: card }).then(function (users) {
                     if (users) {
                         users.forEach(function (user) { ctx.rememberName(user.id, user.name); });
                         role.userIds = users.map(function (user) { return user.id; });
+                        view.dirty[index] = true;
                     }
-                    drawUsers();
+                    drawRole(index);
+                    BX24.fitWindow();
                 });
             });
         }
-        root().querySelector('[data-role="close"]').addEventListener('click', function () {
-            ctx.showMessage('');
-            draw();
-        });
-        root().querySelector('[data-role="save"]').addEventListener('click', function (e) {
-            var form = root();
-            var tabs = {};
-            Object.keys(data.tabs).forEach(function (tab) { tabs[tab] = form.querySelector('[name="tab-' + tab + '"]').value; });
-            var departments = form.querySelector('[name="departments"]');
-            var payload = {
-                id: role.id,
-                name: form.querySelector('[name="name"]').value,
-                userIds: role.userIds,
-                departmentIds: departments ? Array.prototype.map.call(departments.selectedOptions, function (option) { return Number(option.value); }) : [],
-                tabs: tabs,
-                scope: form.querySelector('[name="scope"]').value
-            };
+        var reset = card.querySelector('[data-role="reset"]');
+        if (reset) {
+            reset.addEventListener('click', function () {
+                var saved = view.data.roles.filter(function (r) { return r.id === role.id; })[0];
+                view.roles[index] = copy(saved);
+                delete view.dirty[index];
+                drawRole(index);
+            });
+        }
+        card.querySelector('[data-role="save"]').addEventListener('click', function (e) {
             e.target.disabled = true;
+            var payload = { id: role.id, name: role.name, userIds: role.userIds, departmentIds: role.departmentIds, tabs: role.tabs, scope: role.scope };
             ctx.api('/api/access/save', { role: JSON.stringify(payload) }).then(function () {
                 // Права текущего сотрудника могли измениться: вкладки пересчитаются при следующем открытии приложения
-                ctx.showMessage('Роль сохранена. Изменения доступа к вкладкам сотрудники увидят, когда заново откроют приложение');
-                show();
+                ctx.showMessage('Роль «' + role.name + '» сохранена');
+                keepEditsAndReload(index);
             }).catch(function (error) {
                 e.target.disabled = false;
                 ctx.showError(error);
             });
         });
-        var deleteButton = root().querySelector('[data-role="delete"]');
-        if (deleteButton) {
-            deleteButton.addEventListener('click', function () {
-                if (deleteButton.dataset.confirm !== 'Y') {
-                    deleteButton.dataset.confirm = 'Y';
-                    deleteButton.textContent = 'Точно удалить?';
+        var remove = card.querySelector('[data-role="delete"]');
+        if (remove) {
+            remove.addEventListener('click', function () {
+                if (!role.id) {
+                    view.roles.splice(index, 1);
+                    reindexDirty(index);
+                    draw();
+                    return;
+                }
+                if (remove.dataset.confirm !== 'Y') {
+                    remove.dataset.confirm = 'Y';
+                    remove.textContent = 'Точно удалить?';
                     return;
                 }
                 ctx.api('/api/access/delete', { id: role.id }).then(function () {
-                    ctx.showMessage('Роль удалена');
-                    show();
+                    ctx.showMessage('Роль «' + role.name + '» удалена');
+                    keepEditsAndReload(index);
                 }).catch(ctx.showError);
             });
         }
-        drawUsers();
+    }
+
+    function reindexDirty(removed) {
+        var dirty = {};
+        Object.keys(view.dirty).forEach(function (key) {
+            var i = Number(key);
+            if (i !== removed) {
+                dirty[i > removed ? i - 1 : i] = true;
+            }
+        });
+        view.dirty = dirty;
+    }
+
+    // После сохранения одной карточки несохранённые правки в остальных остаются
+    function keepEditsAndReload(doneIndex) {
+        var pending = view.roles.filter(function (role, i) { return i !== doneIndex && view.dirty[i]; });
+        ctx.api('/api/access').then(function (data) {
+            view.data = data;
+            view.roles = copy(data.roles);
+            view.dirty = {};
+            pending.forEach(function (edited) {
+                var at = edited.id ? view.roles.map(function (r) { return r.id; }).indexOf(edited.id) : -1;
+                if (at === -1) {
+                    view.roles.push(edited);
+                    at = view.roles.length - 1;
+                } else {
+                    view.roles[at] = edited;
+                }
+                view.dirty[at] = true;
+            });
+            draw();
+        }).catch(ctx.showError);
     }
 
     return {
