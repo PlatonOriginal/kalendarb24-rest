@@ -93,58 +93,6 @@ final class AppTest extends TestCase
         self::assertStringNotContainsString('Иван', $json);
     }
 
-    public function testHrCompareTreatsMissingHeadOnBothSidesAsMatch(): void
-    {
-        $store = new MemoryPortalStore();
-        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
-        $http = new FakeTransport([
-            ['result' => ['result' => ['me' => ['ID' => '1'], 'admin' => true]]],
-            ['result' => [['ID' => '1', 'NAME' => 'Компания', 'UF_HEAD' => '1'], ['ID' => '5', 'NAME' => 'Продажи', 'PARENT' => '1']]],
-            ['result' => ['items' => [
-                ['id' => 1, 'name' => 'Компания', 'parentId' => null, 'accessCode' => 'D1'],
-                ['id' => 2, 'name' => 'Продажи', 'parentId' => 1, 'accessCode' => 'D5'],
-            ]]],
-            ['result' => ['item' => ['id' => 1, 'members' => [['userId' => 1, 'role' => 'MEMBER_HEAD']]]]],
-            ['result' => ['item' => ['id' => 2, 'members' => [['userId' => 9, 'role' => 'MEMBER_EMPLOYEE']]]]],
-        ]);
-
-        $json = $this->request($this->app($http, $store), '/api/hr-compare', [], ['HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok']);
-
-        $nodes = json_decode($json, true)['nodes'];
-        self::assertTrue($nodes[0]['headsMatch']);
-        self::assertSame([], $nodes[1]['heads']);
-        self::assertTrue($nodes[1]['headsMatch']);
-    }
-
-    public function testStorageProbeWritesUpdatesReadsAndDeletes(): void
-    {
-        $store = new MemoryPortalStore();
-        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
-        $http = new FakeTransport([
-            ['result' => ['result' => ['me' => ['ID' => '7'], 'admin' => false]]],
-            ['result' => 55],
-            ['result' => true],
-            ['result' => [['ID' => '55', 'CREATED_BY' => '1', 'PROPERTY_VALUES' => ['KIND' => 'probe', 'STATUS' => 'probe_updated', 'USER_ID' => '7']]]],
-            ['result' => true],
-            ['result' => []],
-            ['result' => []],
-            ['result' => 60],
-        ]);
-
-        $json = $this->request($this->app($http, $store), '/api/storage/probe', [], [
-            'HTTP_X_B24_MEMBER' => 'm1', 'HTTP_X_B24_AUTH' => 'tok', 'REQUEST_METHOD' => 'POST',
-        ]);
-
-        $data = json_decode($json, true);
-        self::assertSame(55, $data['itemId']);
-        self::assertSame(60, $data['canaryId']);
-        self::assertSame(['ACTION' => 'canary', 'ACTOR_ID' => 1], $http->requests[7]['params']['PROPERTY_VALUES']);
-        self::assertTrue($data['updateKeepsOtherProperties']);
-        self::assertTrue($data['deleted']);
-        self::assertSame(7, $http->requests[1]['params']['PROPERTY_VALUES']['USER_ID']);
-        self::assertSame('a', $http->requests[1]['params']['auth']);
-    }
-
     public function testOpeningAppByInstallerRenewsStoredTokens(): void
     {
         $store = new MemoryPortalStore();
@@ -157,7 +105,8 @@ final class AppTest extends TestCase
 
         $html = $this->request($this->app($http, $store), '/app', ['REFRESH_ID' => 'rid', 'member_id' => 'm1']);
 
-        self::assertStringContainsString('tab-checks', $html);
+        self::assertStringContainsString('tab-dashboard', $html);
+        self::assertStringNotContainsString('tab-checks', $html);
         self::assertStringContainsString('tab-calendar', $html);
         self::assertSame('new', $store->portals['m1']->accessToken);
         self::assertSame(1, $store->portals['m1']->installedBy);

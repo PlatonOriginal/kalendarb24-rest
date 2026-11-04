@@ -11,6 +11,7 @@
 <h1>Отпуска</h1>
 <nav class="tabs">
     <a href="#calendar" data-tab="calendar">Календарь</a>
+    <a href="#dashboard" data-tab="dashboard" hidden>Дашборд</a>
     <a href="#requests" data-tab="requests">Мои заявки</a>
     <a href="#approve" data-tab="approve">На согласовании <span id="approve-count"></span></a>
     <a href="#acks" data-tab="acks">На ознакомлении <span id="ack-count"></span></a>
@@ -18,12 +19,15 @@
     <a href="#routes" data-tab="routes" hidden>Маршруты</a>
     <a href="#settings" data-tab="settings" hidden>Настройки</a>
     <a href="#access" data-tab="access" hidden>Доступ</a>
-    <a href="#checks" data-tab="checks" hidden>Проверки</a>
 </nav>
 <p id="message" class="message" hidden></p>
 
 <section id="tab-calendar" hidden>
     <div id="calendar"></div>
+</section>
+
+<section id="tab-dashboard" hidden>
+    <div id="dashboard"></div>
 </section>
 
 <section id="tab-requests" hidden>
@@ -105,23 +109,11 @@
     <p><button type="button" id="save-limits">Сохранить лимиты</button></p>
 </section>
 
-<section id="tab-checks" hidden>
-    <h2>Блок 5: где оказалось событие в календаре</h2>
-    <div class="form">
-        <label>Заявка № <input type="number" id="block5-id" min="1"></label>
-        <button type="button" id="block5-run">Проверить</button>
-        <button type="button" id="block5-chart">Доступ к графику отсутствий</button>
-    </div>
-    <table id="block5">
-        <thead><tr><th>Проверка</th><th>Результат</th></tr></thead>
-        <tbody></tbody>
-    </table>
-</section>
 
-<script src="/assets/checks.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/checks.js') ?>"></script>
 <script src="/assets/calendar.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/calendar.js') ?>"></script>
 <script src="/assets/balance.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/balance.js') ?>"></script>
 <script src="/assets/routes.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/routes.js') ?>"></script>
+<script src="/assets/dashboard.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/dashboard.js') ?>"></script>
 <script src="/assets/access.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/access.js') ?>"></script>
 <script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
 <script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>

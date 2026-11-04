@@ -39,6 +39,8 @@ final class RoleService
      */
     public const TABS = [
         'calendar' => ['name' => 'Календарь', 'levels' => [self::NONE, self::VIEW]],
+        'dashboard' => ['name' => 'Дашборд', 'levels' => [self::NONE, self::VIEW]],
+        'dashboardSpeed' => ['name' => 'Дашборд: скорость согласования', 'levels' => [self::NONE, self::VIEW]],
         'balances' => ['name' => 'Остатки', 'levels' => [self::NONE, self::VIEW, self::EDIT]],
         'routes' => ['name' => 'Маршруты', 'levels' => [self::NONE, self::VIEW, self::EDIT]],
         'settings' => ['name' => 'Настройки', 'levels' => [self::NONE, self::VIEW, self::EDIT]],
@@ -560,13 +562,17 @@ final class RoleService
             self::HR => ['Отдел кадров', 'all'],
             self::ROUTE_EDITOR => ['Настройка маршрутов', 'dept'],
         };
+        // Дашборд как в коробке по умолчанию: директор и отдел кадров, скорость согласования только директор
         if ($code === self::DIRECTOR)
         {
             $tabs['balances'] = self::VIEW;
+            $tabs['dashboard'] = self::VIEW;
+            $tabs['dashboardSpeed'] = self::VIEW;
         }
         if ($code === self::HR)
         {
             $tabs['balances'] = self::EDIT;
+            $tabs['dashboard'] = self::VIEW;
         }
         if ($code === self::ROUTE_EDITOR)
         {
@@ -596,10 +602,12 @@ final class RoleService
         $values = $item['PROPERTY_VALUES'] ?? [];
         $legacy = (string)($values['LEGACY'] ?? '');
         $stored = json_decode((string)($values['TABS'] ?? ''), true);
+        // Вкладки, появившиеся после сохранения роли: у перенесённых ролей — как по умолчанию, у остальных скрыты
+        $defaults = in_array($legacy, [self::BASE, self::DIRECTOR, self::HR, self::ROUTE_EDITOR], true) ? self::legacyRole($legacy, [])['tabs'] : [];
         $tabs = [];
         foreach (self::TABS as $tab => $meta)
         {
-            $level = (string)(is_array($stored) ? ($stored[$tab] ?? self::NONE) : self::NONE);
+            $level = (string)(is_array($stored) ? ($stored[$tab] ?? $defaults[$tab] ?? self::NONE) : self::NONE);
             $tabs[$tab] = in_array($level, $meta['levels'], true) ? $level : self::NONE;
         }
         $scope = (string)($values['SCOPE'] ?? 'dept');

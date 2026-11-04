@@ -354,6 +354,13 @@ window.Kb24Calendar = (function () {
         },
         show: function () {
             render();
+        },
+        // С дашборда: календарь отдела на нужный месяц
+        focus: function (departmentId, year, month) {
+            state.departmentId = departmentId;
+            state.employeeId = 0;
+            state.view = 'month';
+            state.anchor = new Date(year, month, 1);
         }
     };
 })();

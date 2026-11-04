@@ -100,12 +100,12 @@ final class FakePortal implements HttpTransport
             'user.get' => isset($params['filter']['UF_DEPARTMENT']) ? ['result' => array_values(array_map(static fn($id) => ['ID' => (string)$id], array_keys(array_filter(
                 $this->userDepartments,
                 static fn(array $departments) => in_array((int)$params['filter']['UF_DEPARTMENT'], $departments, true),
-            ))))] : ['result' => array_map(fn($id) => [
+            ))))] : (!isset($params['filter']['ID']) ? ['result' => array_map(static fn(int $id, array $departments) => ['ID' => (string)$id, 'UF_DEPARTMENT' => $departments], array_keys($this->userDepartments), $this->userDepartments)] : ['result' => array_map(fn($id) => [
                 'ID' => (string)$id,
                 'NAME' => 'Имя' . $id,
                 'LAST_NAME' => 'Фамилия' . $id,
                 'UF_DEPARTMENT' => $this->userDepartments[(int)$id] ?? [],
-            ], (array)$params['filter']['ID'])],
+            ], (array)$params['filter']['ID'])]),
             'batch' => ['result' => $this->batch((array)$params['cmd'])],
             'calendar.event.add' => $this->calendarError ?? ['result' => 1000 + array_push($this->events, $params)],
             'calendar.section.get' => ['result' => $this->sections[(int)$params['ownerId']] ?? []],

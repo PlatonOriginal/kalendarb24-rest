@@ -34,7 +34,7 @@
     var STEP_STATE = { done: 'согласовано', current: 'сейчас здесь', next: 'впереди', skipped: 'пропущен', rejected: 'отклонено' };
     var STEP_KIND = { head: 'руководитель по структуре', hr: 'роль «Отдел кадров»', director: 'роль «Директор»' };
 
-    var state = { me: null, names: {}, checksDone: false };
+    var state = { me: null, names: {} };
 
     function el(id) {
         return document.getElementById(id);
@@ -118,7 +118,7 @@
         return '<span class="status ' + esc(code) + '">' + esc(text) + '</span>';
     }
 
-    var TABS = ['calendar', 'requests', 'approve', 'acks', 'balances', 'routes', 'settings', 'access', 'checks'];
+    var TABS = ['calendar', 'requests', 'approve', 'acks', 'balances', 'routes', 'settings', 'access', 'dashboard'];
 
     function openTab(tab) {
         var link = document.querySelector('.tabs a[data-tab="' + tab + '"]');
@@ -148,9 +148,8 @@
             renderLimits();
         } else if (tab === 'access') {
             window.Kb24Access.show();
-        } else if (tab === 'checks' && !state.checksDone) {
-            state.checksDone = true;
-            window.Kb24Checks.run();
+        } else if (tab === 'dashboard') {
+            window.Kb24Dashboard.show();
         }
         BX24.fitWindow();
     }
@@ -481,11 +480,10 @@
         var card = linked ? api('/api/requests/' + linked) : null;
         api('/api/vacation').then(function (me) {
             state.me = me;
-            // Вкладки открывают роли на вкладке «Доступ»; «Проверки» только администратору портала
-            ['calendar', 'balances', 'routes', 'settings', 'access'].forEach(function (tab) {
+            // Вкладки открывают роли на вкладке «Доступ»
+            ['calendar', 'dashboard', 'balances', 'routes', 'settings', 'access'].forEach(function (tab) {
                 document.querySelector('[data-tab="' + tab + '"]').hidden = me.access[tab] === 'none';
             });
-            document.querySelector('[data-tab="checks"]').hidden = !me.isAdmin;
             bindForm();
             window.Kb24Balance.init({
                 api: api,
@@ -534,16 +532,29 @@
                     form.dateTo.focus();
                 }
             });
+            window.Kb24Dashboard.init({
+                api: api,
+                esc: esc,
+                loadNames: loadNames,
+                name: name,
+                formatDays: window.Kb24Balance.formatDays,
+                showError: showError,
+                openCard: function (id) { openCard(id); },
+                calendarDepartments: function () {
+                    return state.me.access.calendar === 'none' ? [] : state.me.calendar.departments.map(function (d) { return d.id; });
+                },
+                openCalendar: function (departmentId, year, month) {
+                    window.Kb24Calendar.focus(departmentId, year, month);
+                    location.hash = 'calendar';
+                    openTab('calendar');
+                }
+            });
             if (card) {
                 showCard(card);
             } else {
                 openTab(location.hash.replace('#', '') || 'calendar');
             }
             loadToApprove();
-        }).catch(function (error) {
-            showError(error);
-            document.querySelector('[data-tab="checks"]').hidden = false;
-            openTab('checks');
-        });
+        }).catch(showError);
     });
 })();

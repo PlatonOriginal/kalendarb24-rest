@@ -15,6 +15,7 @@ use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
 use Kb24Rest\Vacation\BalanceService;
 use Kb24Rest\Vacation\CalendarService;
+use Kb24Rest\Vacation\DashboardService;
 use Kb24Rest\Vacation\Kinds;
 use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\RejectReasons;
@@ -29,13 +30,8 @@ use Kb24Rest\Vacation\VacationError;
  *   /install    путь для первоначальной установки (портал присылает POST с AUTH_ID и REFRESH_ID)
  *   /app        путь обработчика, главная страница в iframe
  *   /api/me     кто открыл приложение (проверка токена пользователя на сервере)
- *   /api/check  вызов REST с сервера по сохранённому токену приложения
- * Блок 2:
- *   /api/structure  отделы, руководители и цепочка руководителей текущего сотрудника
- *   /api/hr-compare руководители по новой структуре (humanresources) для сравнения с department.get
  * Блок 3:
  *   /api/storage        (администратор) создаёт недостающие хранилища entity.*, показывает их свойства и права
- *   /api/storage/probe  (POST) сервер пишет, меняет, читает и удаляет пробную запись
  * Блок 3, заявки:
  *   /api/vacation              кто я, роли, виды отсутствий, причины отказа
  *   /api/requests/mine         мои заявки
@@ -66,6 +62,7 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/access            роли, вкладки и уровни, отделы
  *   /api/access/save       (POST role: JSON {id, name, userIds, departmentIds, tabs, scope}) сохранить роль
  *   /api/access/delete     (POST id) удалить роль
+ *   /api/dashboard         (POST year) дашборд за год: доступ к вкладке «Дашборд», отделы по видимости роли
  */
 final class App
 {
@@ -90,6 +87,7 @@ final class App
         private readonly ?LimitService $limits = null,
         private readonly ?BalanceService $balances = null,
         private readonly ?RouteService $routes = null,
+        private readonly ?DashboardService $dashboard = null,
     ) {
     }
 
@@ -151,12 +149,9 @@ final class App
                 $path === '/install' => $this->install($post),
                 $path === '/' || $path === '/app' => $this->openApp($post),
                 $path === '/api/me' => $this->json($this->me($this->currentUser($server))),
-                $path === '/api/check' => $this->json($this->check($this->currentUser($server))),
-                $path === '/api/structure' => $this->json($this->structure($this->currentUser($server))),
-                $path === '/api/hr-compare' => $this->json($this->hrCompare($this->currentUser($server))),
                 $path === '/api/storage' => $this->json($this->storageInfo($this->currentAdmin($server))),
-                $path === '/api/storage/probe' && $this->isPost($server)
-                    => $this->json($this->storageProbe($this->currentUser($server))),
+                $path === '/api/dashboard' && $this->dashboard !== null
+                    => $this->json($this->dashboard->build($this->currentUser($server), (int)($post['year'] ?? 0))),
                 $path === '/api/vacation' => $this->json($this->vacation($this->currentUser($server))),
                 $path === '/api/requests/mine' => $this->json($this->mine($this->currentUser($server))),
                 $path === '/api/balances' && $this->balances !== null => $this->json($this->balances->list($this->currentUser($server))),
@@ -296,66 +291,6 @@ final class App
             'domain' => $user->portal->domain,
             'installedBy' => $user->portal->installedBy,
         ];
-    }
-
-    private function check(CurrentUser $user): array
-    {
-        $info = $this->rest->call($user->portal, 'app.info');
-
-        return [
-            'appInfo' => [
-                'code' => $info['CODE'] ?? null,
-                'version' => $info['VERSION'] ?? null,
-                'status' => $info['STATUS'] ?? null,
-                'installed' => $info['INSTALLED'] ?? null,
-                'license' => $info['LICENSE'] ?? null,
-                'paymentExpired' => $info['PAYMENT_EXPIRED'] ?? null,
-                'days' => $info['DAYS'] ?? null,
-            ],
-            'tokenExpiresAt' => $user->portal->expiresAt,
-        ];
-    }
-
-    private function structure(CurrentUser $user): array
-    {
-        $chart = $this->structure->orgChart($user->portal);
-        $departments = [];
-        foreach ($chart->all() as $department)
-        {
-            $departments[] = [
-                'id' => $department->id,
-                'name' => $department->name,
-                'parentId' => $department->parentId,
-                'headUserId' => $department->headUserId,
-            ];
-        }
-
-        return [
-            'userId' => $user->userId,
-            'myDepartments' => $this->structure->departmentsOf($user->portal, $user->userId),
-            'headChain' => $this->structure->headChain($user->portal, $chart, $user->userId),
-            'departments' => $departments,
-        ];
-    }
-
-    private function hrCompare(CurrentUser $user): array
-    {
-        $chart = $this->structure->orgChart($user->portal);
-        $nodes = $this->structure->humanResourcesHeads($user->portal);
-        foreach ($nodes as &$node)
-        {
-            // Предполагаем, что код доступа D<ID> или DR<ID> указывает на отдел из department.get. Это и проверяем.
-            $departmentId = preg_match('/^DR?(\d+)$/', $node['accessCode'], $m) ? (int)$m[1] : null;
-            $department = $departmentId !== null ? $chart->department($departmentId) : null;
-            $node['departmentGetId'] = $department?->id;
-            $node['departmentGetHead'] = $department?->headUserId;
-            // Руководитель не назначен ни там, ни там: это тоже совпадение
-            $node['headsMatch'] = $department !== null && ($department->headUserId === null
-                ? $node['heads'] === []
-                : in_array($department->headUserId, $node['heads'], true));
-        }
-
-        return ['nodes' => $nodes];
     }
 
     private function mine(CurrentUser $user): array
@@ -594,41 +529,6 @@ final class App
      * Пробная запись: проверяем запись, частичное обновление, чтение и удаление на живом портале.
      * Заодно выясняем, заменяет ли entity.item.update все свойства или только переданные (в документации не сказано).
      */
-    private function storageProbe(CurrentUser $user): array
-    {
-        $portal = $user->portal;
-        $started = microtime(true);
-        $id = $this->storage->add($portal, Schema::REQUESTS, 'probe', [
-            'USER_ID' => $user->userId,
-            'KIND' => 'probe',
-            'STATUS' => 'probe',
-            'DAYS' => 1,
-        ]);
-        $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => 'probe_updated']);
-        $found = $this->storage->find($portal, Schema::REQUESTS, ['ID' => $id]);
-        $values = $found[0]['PROPERTY_VALUES'] ?? [];
-        $this->storage->delete($portal, Schema::REQUESTS, $id);
-        $afterDelete = $this->storage->find($portal, Schema::REQUESTS, ['ID' => $id]);
-        $milliseconds = (int)round((microtime(true) - $started) * 1000);
-
-        // Постоянная контрольная запись: по ней браузер проверяет, видит ли сотрудник чужие данные.
-        // Пустой ответ на пустом хранилище ничего не доказывает.
-        $canary = $this->storage->find($portal, Schema::HISTORY, ['PROPERTY_ACTION' => 'canary']);
-        $canaryId = $canary !== []
-            ? (int)$canary[0]['ID']
-            : $this->storage->add($portal, Schema::HISTORY, 'canary', ['ACTION' => 'canary', 'ACTOR_ID' => $portal->installedBy]);
-
-        return [
-            'canaryId' => $canaryId,
-            'itemId' => $id,
-            'createdBy' => isset($found[0]['CREATED_BY']) ? (int)$found[0]['CREATED_BY'] : null,
-            'valuesAfterUpdate' => $values,
-            'updateKeepsOtherProperties' => ($values['KIND'] ?? null) === 'probe',
-            'deleted' => $afterDelete === [],
-            'milliseconds' => $milliseconds,
-        ];
-    }
-
     private function settingsEditor(array $server): CurrentUser
     {
         $user = $this->currentUser($server);
