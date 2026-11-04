@@ -504,26 +504,123 @@ final class RouteServiceTest extends TestCase
         self::assertSame([], $remind('2026-11-09'), 'отсутствие уже началось');
     }
 
-    public function testCancellationNotifiesItsWatchers(): void
+    private function cancelRouteId(string $name = 'Отзыв по умолчанию'): int
+    {
+        return array_column($this->routes->cancelRoutes($this->portal), 'id', 'name')[$name];
+    }
+
+    private function cancel(int $requestId): array
+    {
+        $this->rebuild();
+        $request = $this->service->startCancellation($this->user(self::ACCOUNTANT), $requestId, 'Перенос');
+        $this->rebuild();
+
+        return $request;
+    }
+
+    public function testCancellationGoesByDemoCancelRouteAndNotifiesItsWatchers(): void
     {
         $request = $this->approvedWithWatchers();
-        $this->rebuild();
-        $request = $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Перенос');
+        $demo = $this->routes->cancelRoutes($this->portal)[0];
+        self::assertSame(['Руководитель', 'Отдел кадров'], array_column($demo['steps'], 'name'));
+        $this->saveRoute(['purpose' => 'cancel', 'id' => $demo['id'], 'name' => $demo['name'], 'steps' => $demo['steps'],
+            'watchers' => [['kind' => 'user', 'userId' => self::LAWYER, 'events' => ['approved'], 'task' => 'auto', 'taskDays' => 3]]]);
+
+        $request = $this->cancel($request['id']);
+        self::assertSame([Status::CANCELLING, self::ACCOUNTING_HEAD, 'Руководитель'], [$request['status'], $request['approverId'], $request['cancelStepName']]);
+        $request = $this->service->approveCancellation($this->user(self::ACCOUNTING_HEAD), $request['id']);
+        self::assertSame('Отдел кадров', $request['cancelStepName']);
+        self::assertContains($request['approverId'], [40, 41]);
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame(['done', 'current'], array_column($card['cancelRoute']['steps'], 'state'));
         $this->rebuild();
         $request = $this->service->approveCancellation($this->user($request['approverId']), $request['id']);
-        $this->rebuild();
-        $this->service->approveCancellation($this->user($request['approverId']), $request['id']);
+        self::assertSame(Status::CANCELLED, $request['status']);
 
-        $watch = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'watch'));
-        self::assertSame([[[self::LAWYER]], ['cancelled']], [array_column($watch, 'to'), array_column($watch, 'reason')]);
+        // Об отмене — получатели маршрута отзыва, а не маршрута согласования (там юрист был и на отмену)
+        $watch = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'watch' && $n['reason'] === 'cancelled'));
+        self::assertSame([[self::LAWYER]], array_column($watch, 'to'));
         $this->watch->run();
-        self::assertStringStartsWith('Отмена отпуска: ', $this->http->tasks[0]['TITLE']);
+        self::assertStringStartsWith('Отмена отпуска: ', end($this->http->tasks)['TITLE']);
+        $history = $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['history'];
+        self::assertSame(['Руководитель', 'Отдел кадров'], array_column(array_filter($history, static fn(array $h) => $h['action'] === 'cancel_approve'), 'stepName'));
+    }
+
+    public function testWithoutCancelRouteAbsenceIsCancelledAtOnceAndApproversAreNotified(): void
+    {
+        $request = $this->approvedWithWatchers();
+        $this->routes->delete($this->admin(), $this->cancelRouteId());
+        $this->rebuild();
+        $request = $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Перенос');
+
+        self::assertSame(Status::CANCELLED, $request['status']);
+        $cancelled = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'cancelled'));
+        self::assertEqualsCanonicalizing([self::ACCOUNTING_HEAD, self::DIRECTOR], $cancelled[0]['to'], 'согласовавшие заявку');
+        self::assertSame([], array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'watch' && $n['reason'] === 'cancelled')));
+    }
+
+    public function testCancelRouteIsPickedByKindAndDepartment(): void
+    {
+        $this->saveRoute(['purpose' => 'cancel', 'name' => 'Отзыв бухгалтерии', 'departmentIds' => [14], 'steps' => [$this->step('Юрист', 'user', ['userId' => self::LAWYER])]]);
+        $request = $this->approvedWithWatchers();
+        $request = $this->cancel($request['id']);
+        self::assertSame([self::LAWYER, 'Юрист'], [$request['approverId'], $request['cancelStepName']]);
+
+        $this->rebuild();
+        $request = $this->service->refuseCancellation($this->user(self::LAWYER), $request['id'], 'Некому заменить');
+        self::assertSame(Status::APPROVED, $request['status']);
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame(['rejected'], array_column($card['cancelRoute']['steps'], 'state'));
+    }
+
+    public function testOldCancelledWatchersMoveToCancelRoutes(): void
+    {
+        $this->http->items['kbroute'] = [
+            7 => ['ID' => '7', 'PROPERTY_VALUES' => ['ROUTE_NAME' => 'Юристы', 'IS_DEFAULT' => 'N', 'ACTIVE' => 'Y', 'EXCLUSIVE' => 'N', 'KINDS' => 'study', 'DEPTS' => '14', 'SORT' => '100',
+                'STEPS' => json_encode([['id' => 1, 'name' => 'Руководитель', 'kind' => 'head', 'active' => true]]),
+                'WATCHERS' => json_encode([['kind' => 'user', 'userId' => self::LAWYER, 'events' => ['approved', 'cancelled'], 'task' => 'none', 'taskDays' => 0],
+                    ['kind' => 'hr', 'events' => ['cancelled'], 'task' => 'ask', 'taskDays' => 2]])]],
+        ];
+        $this->rebuild();
+
+        $cancel = $this->routes->cancelRoutes($this->portal);
+        self::assertSame(['Отзыв по умолчанию', 'Отзыв: Юристы'], array_column($cancel, 'name'));
+        $moved = $cancel[1];
+        self::assertSame([['study'], [14]], [$moved['kinds'], $moved['departmentIds']]);
+        self::assertSame([[self::LAWYER, 'user'], [0, 'role']], array_map(static fn(array $w) => [$w['userId'], $w['kind']], $moved['watchers']));
+        self::assertSame([['cancelled'], ['cancelled']], array_column($moved['watchers'], 'events'));
+        $approve = array_values(array_filter($this->routes->all($this->portal), static fn(array $r) => $r['id'] === 7))[0];
+        self::assertSame([['approved']], array_column($approve['watchers'], 'events'));
+
+        // Второй раз не переносим
+        $this->rebuild();
+        self::assertCount(2, $this->routes->cancelRoutes($this->portal));
+    }
+
+    public function testRoleInCancelRouteIsNotDeletedButLegacyHrIsWhenUnused(): void
+    {
+        $hr = $this->roles->byLegacy($this->portal, RoleService::HR);
+        $this->routes->cancelRoutes($this->portal);
+        try
+        {
+            $this->roles->delete($this->admin(), $hr['id'], $this->routes->usingRole($this->portal, $hr['id']));
+            self::fail('Удалил роль из маршрута отзыва');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringContainsString('Отзыв по умолчанию', $e->getMessage());
+        }
+        $director = $this->roles->byLegacy($this->portal, RoleService::DIRECTOR);
+        $this->saveRoute(['isDefault' => true, 'name' => 'По умолчанию', 'steps' => [$this->step('Руководитель', 'head')]]);
+        $this->roles->delete($this->admin(), $director['id'], $this->routes->usingRole($this->portal, $director['id']));
+        $this->rebuild();
+        self::assertNull($this->roles->byId($this->portal, $director['id']));
     }
 
     public function testWatchersAreValidated(): void
     {
-        $this->expectExceptionMessage('Уведомление 1: выберите, о чём уведомлять');
-        $this->saveRoute(['steps' => [$this->step('Директор', 'director')], 'watchers' => [['kind' => 'hr', 'events' => []]]]);
+        $this->expectExceptionMessage('Уведомление 1: выберите, кого уведомить');
+        $this->saveRoute(['steps' => [$this->step('Директор', 'director')], 'watchers' => [['kind' => '', 'events' => []]]]);
     }
 
     public function testDashboardFollowsRolesAndShowsSpeedToDirector(): void
