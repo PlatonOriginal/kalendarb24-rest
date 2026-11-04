@@ -22,6 +22,8 @@ use Kb24Rest\Structure\StructureService;
  */
 final class RequestService
 {
+    /** Отмена идёт по маршруту отзыва, шаг — в CANCEL_INDEX */
+    public const CANCEL_ROUTE = 'route';
     public const CANCEL_HEAD = 'head_review';
     public const CANCEL_HR = 'hr_review';
     public const CANCEL_DONE = 'done';
@@ -241,8 +243,9 @@ final class RequestService
     }
 
     /**
-     * Отмена утверждённой заявки, как в коробке: сотрудник просит отменить не позже чем за N рабочих дней
-     * до начала, отмену согласуют руководитель, затем ОК. Шага бухгалтерии пока нет: нет её роли.
+     * Отмена утверждённой заявки: сотрудник просит отменить не позже чем за N рабочих дней до начала.
+     * Согласуют шаги маршрута отзыва. Если ни один маршрут отзыва не подошёл, отсутствие отменяется сразу,
+     * а узнают об этом те, кто согласовал заявку. Без сервиса маршрутов (старые тесты) — прежняя цепочка руководитель → ОК.
      */
     public function startCancellation(CurrentUser $user, int $id, string $reason): array
     {
@@ -253,22 +256,50 @@ final class RequestService
         {
             throw new VacationError($check);
         }
-        $reason = trim($reason);
+        $reason = mb_substr(trim($reason), 0, 500);
         if ($reason === '')
         {
             throw new VacationError('Укажите причину отмены');
         }
 
-        $approverId = $this->pickApprover($portal, Status::HEAD_REVIEW, $request['userId'], $request['deptId']);
+        if ($this->routes === null)
+        {
+            $approverId = $this->pickApprover($portal, Status::HEAD_REVIEW, $request['userId'], $request['deptId']);
+            $this->storage->update($portal, Schema::REQUESTS, $id, [
+                'STATUS' => Status::CANCELLING,
+                'APPROVER_ID' => $approverId,
+                'CANCEL_STEP' => self::CANCEL_HEAD,
+                'CANCEL_REASON' => $reason,
+            ]);
+            $this->log($portal, $id, $user->userId, 'cancel_start', Status::APPROVED, Status::CANCELLING, $reason);
+            $request = $this->load($portal, $id);
+            $this->notifier?->add($portal, 'cancel_review', $request, [$approverId], $user->userId);
+
+            return $request;
+        }
+
+        $plan = $this->routes->findCancelFor($portal, $request['deptId'], $request['kind']);
+        $skip = $this->allowSelfApproval ? [] : [$request['userId']];
+        $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $request['userId'], $request['deptId'], $skip, true) : null;
         $this->storage->update($portal, Schema::REQUESTS, $id, [
             'STATUS' => Status::CANCELLING,
-            'APPROVER_ID' => $approverId,
-            'CANCEL_STEP' => self::CANCEL_HEAD,
-            'CANCEL_REASON' => mb_substr($reason, 0, 500),
+            'APPROVER_ID' => $step['approverId'] ?? 0,
+            'CANCEL_STEP' => self::CANCEL_ROUTE,
+            'CANCEL_INDEX' => $step['index'] ?? 0,
+            'CANCEL_DATA' => $plan !== null ? json_encode($plan, JSON_UNESCAPED_UNICODE) : '',
+            'CANCEL_REASON' => $reason,
         ]);
-        $this->log($portal, $id, $user->userId, 'cancel_start', Status::APPROVED, Status::CANCELLING, mb_substr($reason, 0, 500));
+        $this->log($portal, $id, $user->userId, 'cancel_start', Status::APPROVED, Status::CANCELLING, $reason);
+        if ($step === null)
+        {
+            // Нет маршрута отзыва или согласовать некому, кроме самого автора: отменяем сразу
+            $this->log($portal, $id, $user->userId, 'cancel_immediate', Status::CANCELLING, Status::CANCELLED, $plan === null ? 'no_route' : 'self');
+
+            return $this->finishCancellation($user, $id, []);
+        }
+        $this->logReroute($portal, $id, $step, Status::CANCELLING);
         $request = $this->load($portal, $id);
-        $this->notifier?->add($portal, 'cancel_review', $request, [$approverId], $user->userId);
+        $this->notifier?->add($portal, 'cancel_review', $request, [$step['approverId']], $user->userId);
 
         return $request;
     }
@@ -277,6 +308,10 @@ final class RequestService
     {
         $portal = $user->portal;
         $request = $this->awaitingCancellationDecisionOf($user, $id);
+        if ($request['cancelStep'] === self::CANCEL_ROUTE)
+        {
+            return $this->approveCancelStep($user, $request);
+        }
 
         if ($request['cancelStep'] === self::CANCEL_HEAD)
         {
@@ -291,7 +326,7 @@ final class RequestService
                 $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HEAD, self::CANCEL_HR);
                 $this->log($portal, $id, $user->userId, 'cancel_auto_approve', self::CANCEL_HR, Status::CANCELLED);
 
-                return $this->finishCancellation($user, $id);
+                return $this->finishCancellation($user, $id, $request['watchers']);
             }
             $this->storage->update($portal, Schema::REQUESTS, $id, ['APPROVER_ID' => $approverId, 'CANCEL_STEP' => self::CANCEL_HR]);
             $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HEAD, self::CANCEL_HR);
@@ -303,17 +338,76 @@ final class RequestService
 
         $this->log($portal, $id, $user->userId, 'cancel_approve', self::CANCEL_HR, Status::CANCELLED);
 
-        return $this->finishCancellation($user, $id);
+        // Отмена, начатая до маршрутов отзыва: получатели из маршрута согласования, как раньше
+        return $this->finishCancellation($user, $id, $request['watchers']);
     }
 
-    private function finishCancellation(CurrentUser $user, int $id): array
+    /**
+     * Согласование отмены на шаге маршрута отзыва: следующий шаг или отмена отсутствия.
+     */
+    private function approveCancelStep(CurrentUser $user, array $request): array
+    {
+        $portal = $user->portal;
+        $id = $request['id'];
+        $plan = self::cancelData($this->loadItem($portal, $id));
+        if ($plan === null || !isset($plan['steps'][$request['cancelIndex']]))
+        {
+            throw new VacationError('Маршрут отзыва заявки повреждён: обратитесь к администратору');
+        }
+        $number = $request['cancelIndex'] + 1;
+        $approvedBy = [...$this->cancelApprovedBy($portal, $id), $user->userId];
+        $skip = $this->allowSelfApproval ? $approvedBy : [$request['userId'], ...$approvedBy];
+        $next = $this->nextRouteStep($portal, $plan, $number, $request['userId'], $request['deptId'], $skip, true);
+        if ($next === null)
+        {
+            $this->log($portal, $id, $user->userId, 'cancel_approve', Status::CANCELLING, Status::CANCELLED, '', $number);
+
+            return $this->finishCancellation($user, $id, $plan['watchers'] ?? []);
+        }
+
+        $this->storage->update($portal, Schema::REQUESTS, $id, ['APPROVER_ID' => $next['approverId'], 'CANCEL_INDEX' => $next['index']]);
+        $this->log($portal, $id, $user->userId, 'cancel_approve', Status::CANCELLING, Status::CANCELLING, '', $number);
+        $this->logReroute($portal, $id, $next, Status::CANCELLING);
+        $request = $this->load($portal, $id);
+        $this->notifier?->add($portal, 'cancel_review', $request, [$next['approverId']], $user->userId);
+
+        return $request;
+    }
+
+    /**
+     * Кто уже согласовал текущую отмену: после отказа сотрудник может попросить отмену ещё раз.
+     *
+     * @return list<int>
+     */
+    private function cancelApprovedBy(Portal $portal, int $requestId): array
+    {
+        $ids = [];
+        foreach ($this->history($portal, $requestId) as $entry)
+        {
+            if ($entry['action'] === 'cancel_start')
+            {
+                $ids = [];
+            }
+            elseif ($entry['action'] === 'cancel_approve')
+            {
+                $ids[] = $entry['actorId'];
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $watchers кого уведомить о результате: из маршрута отзыва или, у прежних отмен, из маршрута согласования
+     */
+    private function finishCancellation(CurrentUser $user, int $id, array $watchers): array
     {
         $portal = $user->portal;
         $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::CANCELLED, 'APPROVER_ID' => 0, 'CANCEL_STEP' => self::CANCEL_DONE]);
         $request = $this->load($portal, $id);
         $this->absence?->remove($portal, $request);
         $this->notifier?->add($portal, 'cancelled', $request, $this->participants($portal, $request), $user->userId);
-        $this->notifyWatchers($portal, $request, 'cancelled');
+        $this->notifyWatchers($portal, ['watchers' => $watchers] + $request, 'cancelled');
 
         return $request;
     }
@@ -329,7 +423,8 @@ final class RequestService
         }
 
         $this->storage->update($portal, Schema::REQUESTS, $id, ['STATUS' => Status::APPROVED, 'APPROVER_ID' => 0, 'CANCEL_STEP' => self::CANCEL_REFUSED]);
-        $this->log($portal, $id, $user->userId, 'cancel_refuse', $request['cancelStep'], Status::APPROVED, mb_substr($reason, 0, 500));
+        $route = $request['cancelStep'] === self::CANCEL_ROUTE;
+        $this->log($portal, $id, $user->userId, 'cancel_refuse', $route ? Status::CANCELLING : $request['cancelStep'], Status::APPROVED, mb_substr($reason, 0, 500), $route ? $request['cancelIndex'] + 1 : 0);
         $request = $this->load($portal, $id);
         $this->notifier?->add($portal, 'cancel_refused', $request, $this->participants($portal, $request), $user->userId, mb_substr($reason, 0, 500));
 
@@ -450,10 +545,12 @@ final class RequestService
         }
         $request = self::toRequest($found['request'][0]);
         $plan = self::routeData($found['request'][0]);
+        $cancelPlan = self::cancelData($found['request'][0]);
         $history = array_map(self::toHistory(...), $found['history']);
         foreach ($history as &$entry)
         {
-            $entry['stepName'] = $entry['step'] > 0 ? (string)($plan['steps'][$entry['step'] - 1]['name'] ?? '') : '';
+            $steps = str_starts_with($entry['action'], 'cancel_') ? ($cancelPlan['steps'] ?? []) : ($plan['steps'] ?? []);
+            $entry['stepName'] = $entry['step'] > 0 ? (string)($steps[$entry['step'] - 1]['name'] ?? '') : '';
         }
         unset($entry);
         $this->roles->remember($portal, $found['roles']);
@@ -492,6 +589,7 @@ final class RequestService
             'acks' => $acks,
             'myAck' => array_values(array_filter($acks, static fn(array $a) => $a['userId'] === $user->userId && $a['ackAt'] === ''))[0] ?? null,
             'route' => $plan !== null ? $this->exportRoute($portal, $request, $plan, $history) : null,
+            'cancelRoute' => $cancelPlan !== null ? $this->exportCancelRoute($portal, $request, $cancelPlan, $history) : null,
         ];
     }
 
@@ -639,6 +737,7 @@ final class RequestService
         $reviewing = [
             ...$this->findRequests($portal, ['PROPERTY_STATUS' => Status::HR_REVIEW]),
             ...($this->routes !== null ? $this->findRequests($portal, ['PROPERTY_STATUS' => Status::ROUTE_REVIEW]) : []),
+            ...$this->findRequests($portal, ['PROPERTY_STATUS' => Status::CANCELLING]),
         ];
         foreach ($reviewing as $request)
         {
@@ -770,6 +869,11 @@ final class RequestService
             'absenceId' => (int)($values['ABSENCE_ID'] ?? 0),
             'cancelStep' => (string)($values['CANCEL_STEP'] ?? ''),
             'cancelReason' => (string)($values['CANCEL_REASON'] ?? ''),
+            'cancelIndex' => (int)($values['CANCEL_INDEX'] ?? 0),
+            // Название текущего шага маршрута отзыва
+            'cancelStepName' => ($values['STATUS'] ?? '') === Status::CANCELLING && ($values['CANCEL_STEP'] ?? '') === self::CANCEL_ROUTE
+                ? (string)(self::cancelData($item)['steps'][(int)($values['CANCEL_INDEX'] ?? 0)]['name'] ?? '')
+                : '',
             'routeId' => (int)($values['ROUTE_ID'] ?? 0),
             'watchers' => is_array($watchers = json_decode((string)($values['WATCHERS'] ?? ''), true)) ? $watchers : [],
             'step' => (int)($values['STEP'] ?? 0),
@@ -789,6 +893,18 @@ final class RequestService
     public static function routeData(array $item): ?array
     {
         $data = json_decode((string)($item['PROPERTY_VALUES']['ROUTE_DATA'] ?? ''), true);
+
+        return is_array($data) && isset($data['steps']) && is_array($data['steps']) ? $data : null;
+    }
+
+    /**
+     * Снимок маршрута отзыва, сделанный при запросе отмены.
+     *
+     * @return array{id: int, name: string, steps: list<array<string, mixed>>, watchers: list<array<string, mixed>>}|null
+     */
+    public static function cancelData(array $item): ?array
+    {
+        $data = json_decode((string)($item['PROPERTY_VALUES']['CANCEL_DATA'] ?? ''), true);
 
         return is_array($data) && isset($data['steps']) && is_array($data['steps']) ? $data : null;
     }
@@ -839,7 +955,7 @@ final class RequestService
      * @param list<int> $skip автор и те, кто уже согласовал: их шаги засчитываются сами
      * @return array{index: int, approverId: int, rerouted: bool}|null null — шагов больше нет
      */
-    private function nextRouteStep(Portal $portal, array $plan, int $from, int $userId, int $departmentId, array $skip): ?array
+    private function nextRouteStep(Portal $portal, array $plan, int $from, int $userId, int $departmentId, array $skip, bool $cancel = false): ?array
     {
         $flags = $this->routes?->activeFlags($portal, (int)$plan['id']) ?? [];
         $steps = array_map(
@@ -858,7 +974,7 @@ final class RequestService
         }
         if ($approverId === $userId && !$this->allowSelfApproval)
         {
-            throw new VacationError('Заявку некому согласовать, кроме вас самих: проверьте состав ролей на вкладке «Доступ»');
+            throw new VacationError(($cancel ? 'Отмену' : 'Заявку') . ' некому согласовать, кроме вас самих: проверьте состав ролей на вкладке «Доступ»');
         }
 
         return ['index' => $next['index'], 'approverId' => $approverId, 'rerouted' => $next['approverId'] === null];
@@ -940,11 +1056,11 @@ final class RequestService
     /**
      * @param array{index: int, approverId: int, rerouted: bool} $step
      */
-    private function logReroute(Portal $portal, int $requestId, array $step): void
+    private function logReroute(Portal $portal, int $requestId, array $step, string $status = Status::ROUTE_REVIEW): void
     {
         if ($step['rerouted'])
         {
-            $this->log($portal, $requestId, $step['approverId'], 'reroute', Status::ROUTE_REVIEW, Status::ROUTE_REVIEW, '', $step['index'] + 1);
+            $this->log($portal, $requestId, $step['approverId'], $status === Status::CANCELLING ? 'cancel_reroute' : 'reroute', $status, $status, '', $step['index'] + 1);
         }
     }
 
@@ -1007,6 +1123,52 @@ final class RequestService
                 'state' => $state,
                 'actorId' => $decided['actorId'] ?? ($state === 'current' ? $request['approverId'] : 0),
                 'rejectUntil' => $rejectDays > 0 ? (new \DateTimeImmutable($request['dateFrom']))->modify("-{$rejectDays} days")->format('Y-m-d') : '',
+            ];
+        }
+
+        return ['name' => (string)($plan['name'] ?? ''), 'steps' => $steps];
+    }
+
+    /**
+     * Шаги последней отмены по маршруту отзыва: как exportRoute, только по записям cancel_* после последнего cancel_start.
+     *
+     * @param list<array<string, mixed>> $history
+     */
+    private function exportCancelRoute(Portal $portal, array $request, array $plan, array $history): array
+    {
+        $byStep = [];
+        foreach ($history as $entry)
+        {
+            if ($entry['action'] === 'cancel_start')
+            {
+                $byStep = [];
+            }
+            elseif ($entry['step'] > 0 && in_array($entry['action'], ['cancel_approve', 'cancel_refuse'], true))
+            {
+                $byStep[$entry['step'] - 1] = $entry;
+            }
+        }
+        $flags = $this->routes?->activeFlags($portal, (int)$plan['id']) ?? [];
+        $reviewing = $request['status'] === Status::CANCELLING && $request['cancelStep'] === self::CANCEL_ROUTE;
+        $steps = [];
+        foreach ($plan['steps'] as $index => $step)
+        {
+            $decided = $byStep[$index] ?? null;
+            $state = match (true)
+            {
+                $decided !== null => $decided['action'] === 'cancel_refuse' ? 'rejected' : 'done',
+                $reviewing && $index === $request['cancelIndex'] => 'current',
+                $reviewing && $index > $request['cancelIndex'] && ($flags[$step['id'] ?? 0] ?? true) => 'next',
+                default => 'skipped',
+            };
+            $steps[] = [
+                'name' => (string)($step['name'] ?? ''),
+                'kind' => (string)($step['kind'] ?? ''),
+                'userId' => (int)($step['userId'] ?? 0),
+                'roleName' => ($step['kind'] ?? '') === RouteService::KIND_ROLE ? (string)($this->roles->byId($portal, (int)($step['roleId'] ?? 0))['name'] ?? 'удалена') : '',
+                'state' => $state,
+                'actorId' => $decided['actorId'] ?? ($state === 'current' ? $request['approverId'] : 0),
+                'rejectUntil' => '',
             ];
         }
 

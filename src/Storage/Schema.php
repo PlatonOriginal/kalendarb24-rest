@@ -41,7 +41,9 @@ final class Schema
                     'CAL_EVENT_ID' => ['name' => 'Событие в календаре сотрудника (ID)', 'type' => 'N'],
                     'CAL_ERROR' => ['name' => 'Почему событие или запись в графике не созданы', 'type' => 'S'],
                     'ABSENCE_ID' => ['name' => 'Запись в графике отсутствий (ID)', 'type' => 'N'],
-                    'CANCEL_STEP' => ['name' => 'Отмена: шаг (head_review, hr_review, done, refused)', 'type' => 'S'],
+                    'CANCEL_STEP' => ['name' => 'Отмена: шаг (route — по маршруту отзыва; прежние head_review, hr_review; done, refused)', 'type' => 'S'],
+                    'CANCEL_INDEX' => ['name' => 'Отмена: шаг маршрута отзыва (номер с 0)', 'type' => 'N'],
+                    'CANCEL_DATA' => ['name' => 'Маршрут отзыва на момент запроса отмены (JSON)', 'type' => 'S'],
                     'CANCEL_REASON' => ['name' => 'Отмена: причина', 'type' => 'S'],
                     'ROUTE_ID' => ['name' => 'Маршрут (ID записи kbroute)', 'type' => 'N'],
                     'ROUTE_DATA' => ['name' => 'Маршрут на момент подачи (JSON)', 'type' => 'S'],
@@ -103,9 +105,10 @@ final class Schema
                 ],
             ],
             self::ROUTES => [
-                'name' => 'Отпуска: маршруты согласования',
+                'name' => 'Отпуска: маршруты согласования и отзыва',
                 'properties' => [
                     'ROUTE_NAME' => ['name' => 'Название', 'type' => 'S'],
+                    'PURPOSE' => ['name' => 'Назначение (approve — согласование, cancel — отзыв)', 'type' => 'S'],
                     'IS_DEFAULT' => ['name' => 'Маршрут по умолчанию (Y/N)', 'type' => 'S'],
                     'ACTIVE' => ['name' => 'Включён (Y/N)', 'type' => 'S'],
                     'EXCLUSIVE' => ['name' => 'Единственный вариант для своих видов (Y/N)', 'type' => 'S'],

@@ -25,10 +25,12 @@ final class Settings
         'min_submit_days' => 0,
         // Срок подачи не действует на отпуск без сохранения заработной платы
         'min_submit_exempt_unpaid' => 0,
+        // Маршруты отзыва уже заведены: демо-маршрут создан, получатели «отменено» перенесены из маршрутов согласования
+        'cancel_routes_ready' => 0,
     ];
 
     /** Настройки «да или нет»: хранятся как 0 и 1 */
-    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid'];
+    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid', 'cancel_routes_ready'];
 
     /** @var array<string, array<string, int>> */
     private array $cache = [];
@@ -125,6 +127,17 @@ final class Settings
             throw new VacationError('Укажите число рабочих дней от 0 до 365');
         }
         $this->rest->call($portal, 'app.option.set', ['options' => ['max_cancel_working_days' => $days]]);
+        unset($this->cache[$portal->memberId]);
+    }
+
+    public function cancelRoutesReady(Portal $portal): bool
+    {
+        return $this->all($portal)['cancel_routes_ready'] === 1;
+    }
+
+    public function setCancelRoutesReady(Portal $portal): void
+    {
+        $this->rest->call($portal, 'app.option.set', ['options' => ['cancel_routes_ready' => 1]]);
         unset($this->cache[$portal->memberId]);
     }
 }

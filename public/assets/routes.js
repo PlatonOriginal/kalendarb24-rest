@@ -1,5 +1,6 @@
 /**
- * Вкладка «Маршруты», как в коробке: список маршрутов и редактор шагов. Кто видит и меняет маршруты, задают роли на вкладке «Доступ».
+ * Вкладка «Маршруты», как в коробке: маршруты согласования и маршруты отзыва (кто согласует отмену утверждённого отсутствия),
+ * список и редактор шагов. Кто видит и меняет маршруты, задают роли на вкладке «Доступ».
  * Сервер хранит только ID сотрудников: ФИО запрашивает браузер.
  */
 window.Kb24Routes = (function () {
@@ -12,7 +13,8 @@ window.Kb24Routes = (function () {
         ['user', 'Конкретный сотрудник']
     ];
 
-    var EVENTS = [['approved', 'Утверждение'], ['cancelled', 'Отмена утверждённого']];
+    // О чём узнают получатели: маршрут согласования сообщает об утверждении, маршрут отзыва — об отмене
+    var EVENT = { approve: 'approved', cancel: 'cancelled' };
     var TASKS = [['none', 'Не ставить'], ['auto', 'Ставить сразу'], ['ask', 'Спросить при ознакомлении']];
     var MAX_WATCHERS = 10;
 
@@ -49,7 +51,7 @@ window.Kb24Routes = (function () {
 
     function userIds() {
         var ids = [];
-        view.data.routes.forEach(function (route) {
+        view.data.routes.concat(view.data.cancelRoutes).forEach(function (route) {
             ids.push(route.updatedBy);
             route.steps.forEach(function (step) { ids.push(step.userId); });
             route.watchers.forEach(function (watcher) { ids.push(watcher.userId); });
@@ -70,8 +72,11 @@ window.Kb24Routes = (function () {
 
     function draw() {
         var data = view.data;
-        root().innerHTML = (data.canEdit ? '<p><button type="button" class="primary" data-role="add">+ Новый маршрут</button></p>'
-                : '<p class="hint">Вам доступен только просмотр маршрутов.</p>')
+        var add = function (purpose, text) {
+            return data.canEdit ? '<p><button type="button" class="primary" data-add="' + purpose + '">' + text + '</button></p>' : '';
+        };
+        root().innerHTML = (data.canEdit ? '' : '<p class="hint">Вам доступен только просмотр маршрутов.</p>')
+            + '<h2>Маршруты согласования</h2>' + add('approve', '+ Новый маршрут согласования')
             + '<p class="hint">Маршрут задаёт шаги согласования для видов отсутствия и отделов. Из подходящих маршрутов срабатывает самый точный: '
             + 'закреплённый за видом как единственный вариант, затем маршрут отдела сотрудника (ближайшего вверх по структуре) с этим видом, отдела без вида, '
             + 'вида без отдела и общий. Если не подошёл ни один, работает маршрут «По умолчанию». '
@@ -80,31 +85,41 @@ window.Kb24Routes = (function () {
             + 'На шаге роли заявка достаётся участнику роли, у которого меньше заявок на проверке. '
             + 'Выключенный шаг пропускается и в уже поданных заявках, если они до него ещё не дошли. '
             + 'Поданные заявки идут по маршруту, каким он был при подаче. '
-            + 'Получатели из «Уведомить о результате» не согласуют, а узнают об утверждении или отмене и подтверждают ознакомление; '
+            + 'Получатели из «Уведомить о результате» не согласуют, а узнают об утверждении и подтверждают ознакомление; '
             + 'пока не подтвердят, каждый рабочий день до начала отсутствия им приходит напоминание.</p>'
-            + '<div class="routes">' + data.routes.map(card).join('') + '</div>';
+            + '<div class="routes">' + data.routes.map(function (route, index) { return card(route, index, 'approve'); }).join('') + '</div>'
+            + '<h2>Маршруты отзыва</h2>' + add('cancel', '+ Новый маршрут отзыва')
+            + '<p class="hint">Кто согласует отмену утверждённого отсутствия. Маршрут выбирается по тем же правилам, что и маршрут согласования, '
+            + 'и шаги пропускаются так же. Если не подошёл ни один маршрут отзыва, отсутствие отменяется сразу, а узнают об этом те, кто согласовал заявку. '
+            + 'Отменить отсутствие сотрудник может не позже срока из вкладки «Настройки». Отказ в отмене оставляет отсутствие в силе. '
+            + 'Получатели из «Уведомить о результате» узнают об отмене и подтверждают ознакомление.</p>'
+            + (data.cancelRoutes.length ? '<div class="routes">' + data.cancelRoutes.map(function (route, index) { return card(route, index, 'cancel'); }).join('') + '</div>'
+                : '<p class="hint">Маршрутов отзыва нет: отсутствия отменяются без согласования.</p>');
 
-        if (data.canEdit) {
-            root().querySelector('[data-role="add"]').addEventListener('click', function () {
-                openEditor({ id: 0, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], steps: [newStep('Руководитель отдела', 'head')], watchers: [] });
+        root().querySelectorAll('[data-add]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var purpose = button.dataset.add;
+                openEditor({ id: 0, purpose: purpose, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [],
+                    steps: [newStep('Руководитель отдела', 'head')], watchers: [] });
             });
-        }
+        });
         // По номеру в списке: у маршрута «По умолчанию», пока его не сохраняли, ID нет
         root().querySelectorAll('[data-route]').forEach(function (button) {
             button.addEventListener('click', function () {
-                openEditor(JSON.parse(JSON.stringify(data.routes[Number(button.dataset.route)])));
+                var list = button.dataset.purpose === 'cancel' ? data.cancelRoutes : data.routes;
+                openEditor(JSON.parse(JSON.stringify(list[Number(button.dataset.route)])));
             });
         });
         BX24.fitWindow();
     }
 
     function watcherText(watcher) {
-        var events = EVENTS.filter(function (e) { return watcher.events.indexOf(e[0]) !== -1; }).map(function (e) { return e[1].toLowerCase(); });
         var task = { none: '', auto: ', задача сразу', ask: ', задача по выбору' }[watcher.task] || '';
-        return who(watcher) + ': ' + events.join(' и ') + task + (watcher.task !== 'none' ? ' (срок за ' + watcher.taskDays + ' дн. до начала)' : '');
+        return who(watcher) + task + (watcher.task !== 'none' ? ' (срок за ' + watcher.taskDays + ' дн. до начала)' : '');
     }
 
-    function card(route, index) {
+    function card(route, index, purpose) {
+        var cancel = purpose === 'cancel';
         var kinds = kindNames(route.kinds);
         var departments = departmentNames(route.departmentIds);
         var minDays = route.steps.reduce(function (max, s) { return s.active ? Math.max(max, s.submitDays) : max; }, 0);
@@ -112,17 +127,17 @@ window.Kb24Routes = (function () {
             + '<div class="route-head"><b>' + esc(route.name) + '</b>'
             + (route.active ? '' : ' <span class="chip">выключен</span>')
             + (route.exclusive ? ' <span class="chip accent">единственный для своих видов</span>' : '')
-            + (view.data.canEdit ? ' <button type="button" data-route="' + index + '">Изменить</button>' : '') + '</div>'
+            + (view.data.canEdit ? ' <button type="button" data-route="' + index + '" data-purpose="' + purpose + '">Изменить</button>' : '') + '</div>'
             + '<div class="hint">' + (route.isDefault ? 'Когда не подошёл ни один другой маршрут'
                 : 'Виды: ' + esc(kinds.length ? kinds.join(', ') : 'все') + ' · Отделы: ' + esc(departments.length ? departments.join(', ') + ' (с подотделами)' : 'все'))
-            + ' · Подача не позже чем за ' + esc(minDays) + ' дн.</div>'
+            + (cancel ? '' : ' · Подача не позже чем за ' + esc(minDays) + ' дн.') + '</div>'
             + '<ol class="route-steps">' + route.steps.map(function (step) {
                 return '<li class="' + (step.active ? '' : 'is-off') + '"><b>' + esc(step.name) + '</b> — ' + esc(who(step))
                     + (step.rejectDays ? ', отклонить не позже чем за ' + esc(step.rejectDays) + ' дн. до начала' : '')
                     + (step.submitDays ? ', подача за ' + esc(step.submitDays) + ' дн.' : '')
                     + (step.active ? '' : ', выключен') + '</li>';
             }).join('') + '</ol>'
-            + (route.watchers.length ? '<div class="hint">Уведомить о результате: ' + route.watchers.map(function (w) { return esc(watcherText(w)); }).join('; ') + '</div>' : '')
+            + (route.watchers.length ? '<div class="hint">' + (cancel ? 'Уведомить об отмене: ' : 'Уведомить об утверждении: ') + route.watchers.map(function (w) { return esc(watcherText(w)); }).join('; ') + '</div>' : '')
             + (route.updatedBy ? '<div class="hint">Изменил: ' + esc(ctx.name(route.updatedBy)) + ', ' + esc(route.updatedAt) + '</div>' : '')
             + '</div>';
     }
@@ -152,9 +167,11 @@ window.Kb24Routes = (function () {
 
     function openEditor(route) {
         var kinds = ctx.me().kinds;
-        root().innerHTML = '<h2>' + (route.id || route.isDefault ? 'Маршрут «' + esc(route.name) + '»' : 'Новый маршрут') + '</h2>'
+        var cancel = route.purpose === 'cancel';
+        var noun = cancel ? 'Маршрут отзыва' : 'Маршрут';
+        root().innerHTML = '<h2>' + (route.id || route.isDefault ? noun + ' «' + esc(route.name) + '»' : (cancel ? 'Новый маршрут отзыва' : 'Новый маршрут')) + '</h2>'
             + '<div class="form route-form">'
-            + '<label>Название <input name="name" maxlength="100" size="40" value="' + esc(route.name) + '" placeholder="Например, «Отпуска производства»"></label>'
+            + '<label>Название <input name="name" maxlength="100" size="40" value="' + esc(route.name) + '" placeholder="' + (cancel ? 'Например, «Отзыв отпусков производства»' : 'Например, «Отпуска производства»') + '"></label>'
             + (route.isDefault ? '' : '<label class="check"><input type="checkbox" name="active"' + (route.active ? ' checked' : '') + '> маршрут включён</label>')
             + '</div>'
             + (route.isDefault ? '<p class="hint">Действует на все виды отсутствия и отделы, когда не подошёл ни один другой маршрут. Выключить или удалить его нельзя.</p>' : '<div class="route-cols">'
@@ -171,22 +188,23 @@ window.Kb24Routes = (function () {
             }).join('') + '</select></div>'
             + '</div>')
             + '<h3>Шаги <span class="hint">(от 1 до ' + MAX_STEPS + ')</span></h3>'
-            + '<table class="route-table"><thead><tr><th>№</th><th>Шаг</th><th>Кто согласует</th>'
-            + '<th title="Заявку подают не позже чем за столько дней до начала">Подача за, дн.</th>'
-            + '<th title="Отклонить на этом шаге можно не позже чем за столько дней до начала">Отклонить до, дн.</th>'
+            + '<table class="route-table"><thead><tr><th>№</th><th>Шаг</th><th>' + (cancel ? 'Кто согласует отмену' : 'Кто согласует') + '</th>'
+            + (cancel ? '' : '<th title="Заявку подают не позже чем за столько дней до начала">Подача за, дн.</th>'
+                + '<th title="Отклонить на этом шаге можно не позже чем за столько дней до начала">Отклонить до, дн.</th>')
             + '<th>Включён</th><th></th></tr></thead><tbody data-role="steps"></tbody></table>'
             + '<p><button type="button" data-role="add-step">+ Шаг</button></p>'
-            + '<p class="hint">«Подача за» — за сколько дней до начала отсутствия нужно подать заявку, чтобы этот шаг успел её рассмотреть; '
-            + 'по маршруту берётся наибольший срок среди включённых шагов. «Отклонить до» — позже этого срока шаг может только согласовать; 0 — без ограничения.</p>'
-            + '<h3>Уведомить о результате</h3>'
-            + '<p class="hint">Эти сотрудники не согласуют заявку, а получают уведомление об утверждении или отмене отсутствия и подтверждают ознакомление в карточке заявки. '
+            + (cancel ? '' : '<p class="hint">«Подача за» — за сколько дней до начала отсутствия нужно подать заявку, чтобы этот шаг успел её рассмотреть; '
+            + 'по маршруту берётся наибольший срок среди включённых шагов. «Отклонить до» — позже этого срока шаг может только согласовать; 0 — без ограничения.</p>')
+            + '<h3>' + (cancel ? 'Уведомить об отмене' : 'Уведомить об утверждении') + '</h3>'
+            + '<p class="hint">Эти сотрудники не согласуют, а получают уведомление ' + (cancel ? 'об отмене' : 'об утверждении') + ' отсутствия и подтверждают ознакомление в карточке заявки. '
             + 'Задачу ставим получателю, постановщик — автор заявки, срок — за указанное число дней до начала отсутствия. «Спросить» — получатель сам решает при ознакомлении и может поменять срок.</p>'
-            + '<table class="route-table"><thead><tr><th>Кого уведомить</th><th>О чём</th><th>Задача</th><th>Срок задачи: за, дн. до начала</th><th></th></tr></thead>'
+            + '<table class="route-table"><thead><tr><th>Кого уведомить</th><th>Задача</th><th>Срок задачи: за, дн. до начала</th><th></th></tr></thead>'
             + '<tbody data-role="watchers"></tbody></table>'
             + '<p><button type="button" data-role="add-watcher">+ Получатель</button></p>'
             + '<div class="actions"><button type="button" class="primary" data-role="save">Сохранить</button>'
             + '<button type="button" data-role="close">Отмена</button>'
-            + (route.id && !route.isDefault ? '<button type="button" class="danger" data-role="delete">Удалить маршрут</button>' : '') + '</div>';
+            + (route.id && !route.isDefault ? '<button type="button" class="danger" data-role="delete">Удалить маршрут</button>' : '') + '</div>'
+            + (route.id && cancel ? '<p class="hint">Если удалить все маршруты отзыва, отсутствия будут отменяться без согласования.</p>' : '');
 
         var tbody = root().querySelector('[data-role="steps"]');
         var wbody = root().querySelector('[data-role="watchers"]');
@@ -202,7 +220,7 @@ window.Kb24Routes = (function () {
                     kind: kind,
                     userId: kind === 'user' ? route.watchers[index].userId : 0,
                     roleId: kind === 'role' ? readRole(tr, 'watchRole') : 0,
-                    events: Array.prototype.map.call(tr.querySelectorAll('[name="watchEvent"]:checked'), function (input) { return input.value; }),
+                    events: [EVENT[route.purpose] || 'approved'],
                     task: tr.querySelector('[name="watchTask"]').value,
                     taskDays: Number(tr.querySelector('[name="taskDays"]').value) || 0
                 };
@@ -216,15 +234,12 @@ window.Kb24Routes = (function () {
                     }).join('') + '</select>'
                     + (w.kind === 'user' ? '<br><button type="button" data-pick>' + esc(w.userId ? ctx.name(w.userId) : 'Выбрать сотрудника') + '</button>' : '')
                     + (w.kind === 'role' ? roleSelect('watchRole', w.roleId) + '<br><span class="hint">уведомляются все участники роли</span>' : '')
-                    + '</td><td>' + EVENTS.map(function (e) {
-                        return '<label class="check"><input type="checkbox" name="watchEvent" value="' + e[0] + '"' + (w.events.indexOf(e[0]) !== -1 ? ' checked' : '') + '> ' + esc(e[1]) + '</label>';
-                    }).join('<br>') + '</td>'
-                    + '<td><select name="watchTask">' + TASKS.map(function (t) {
+                    + '</td><td><select name="watchTask">' + TASKS.map(function (t) {
                         return '<option value="' + t[0] + '"' + (w.task === t[0] ? ' selected' : '') + '>' + esc(t[1]) + '</option>';
                     }).join('') + '</select></td>'
                     + '<td><input type="number" min="0" max="365" name="taskDays" value="' + esc(w.taskDays) + '"' + (w.task === 'none' ? ' disabled' : '') + '></td>'
                     + '<td><button type="button" class="danger" data-remove title="Убрать">×</button></td></tr>';
-            }).join('') : '<tr><td colspan="5" class="hint">Никого: о результате узнаёт только автор заявки</td></tr>';
+            }).join('') : '<tr><td colspan="4" class="hint">Никого: о результате узнаёт только автор заявки</td></tr>';
             root().querySelector('[data-role="add-watcher"]').disabled = route.watchers.length >= MAX_WATCHERS;
             Array.prototype.forEach.call(wbody.querySelectorAll('tr'), function (tr, index) {
                 if (!route.watchers.length) {
@@ -259,7 +274,7 @@ window.Kb24Routes = (function () {
 
         root().querySelector('[data-role="add-watcher"]').addEventListener('click', function () {
             readWatchers();
-            route.watchers.push({ kind: 'role', userId: 0, roleId: 0, events: ['approved', 'cancelled'], task: 'none', taskDays: 3 });
+            route.watchers.push({ kind: 'role', userId: 0, roleId: 0, events: [EVENT[route.purpose] || 'approved'], task: 'none', taskDays: 3 });
             drawWatchers();
         });
 
@@ -272,8 +287,8 @@ window.Kb24Routes = (function () {
                     kind: kind,
                     userId: kind === 'user' ? route.steps[index].userId : 0,
                     roleId: kind === 'role' ? readRole(tr, 'stepRole') : 0,
-                    submitDays: Number(tr.querySelector('[name="submitDays"]').value) || 0,
-                    rejectDays: Number(tr.querySelector('[name="rejectDays"]').value) || 0,
+                    submitDays: cancel ? 0 : Number(tr.querySelector('[name="submitDays"]').value) || 0,
+                    rejectDays: cancel ? 0 : Number(tr.querySelector('[name="rejectDays"]').value) || 0,
                     active: tr.querySelector('[name="stepActive"]').checked
                 };
             });
@@ -289,8 +304,8 @@ window.Kb24Routes = (function () {
                     + (step.kind === 'user' ? '<br><button type="button" data-pick>' + esc(step.userId ? ctx.name(step.userId) : 'Выбрать сотрудника') + '</button>' : '')
                     + (step.kind === 'role' ? roleSelect('stepRole', step.roleId) : '')
                     + '</td>'
-                    + '<td><input type="number" min="0" max="365" name="submitDays" value="' + esc(step.submitDays) + '"></td>'
-                    + '<td><input type="number" min="0" max="365" name="rejectDays" value="' + esc(step.rejectDays) + '"></td>'
+                    + (cancel ? '' : '<td><input type="number" min="0" max="365" name="submitDays" value="' + esc(step.submitDays) + '"></td>'
+                        + '<td><input type="number" min="0" max="365" name="rejectDays" value="' + esc(step.rejectDays) + '"></td>')
                     + '<td><input type="checkbox" name="stepActive"' + (step.active ? ' checked' : '') + '></td>'
                     + '<td class="nowrap"><button type="button" data-move="-1" title="Выше"' + (index ? '' : ' disabled') + '>↑</button>'
                     + '<button type="button" data-move="1" title="Ниже"' + (index < route.steps.length - 1 ? '' : ' disabled') + '>↓</button>'
@@ -352,6 +367,7 @@ window.Kb24Routes = (function () {
             var form = root();
             var payload = {
                 id: route.id,
+                purpose: route.purpose || 'approve',
                 isDefault: route.isDefault,
                 name: form.querySelector('[name="name"]').value,
                 steps: route.steps,

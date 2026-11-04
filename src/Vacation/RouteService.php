@@ -18,6 +18,11 @@ use Kb24Rest\Structure\StructureService;
  * с подтверждением ознакомления и, если нужно, задачей.
  * Маршрут — одна запись kbroute, шаги в ней одним JSON (в коробке это две таблицы). У шага постоянный id
  * внутри маршрута: по нему уже поданные заявки узнают, что шаг выключили.
+ *
+ * Маршруты отзыва (PURPOSE = cancel) — кто согласует отмену утверждённого отсутствия. Выбираются по тем же условиям,
+ * но маршрута «По умолчанию» у них нет: если не подошёл ни один, отсутствие отменяется сразу. При первом обращении
+ * создаётся демо-маршрут «руководитель → роль «Отдел кадров»», а получатели события «отменено» переезжают
+ * из маршрутов согласования в маршруты отзыва с теми же условиями.
  */
 final class RouteService
 {
@@ -34,8 +39,10 @@ final class RouteService
     /** Задача получателю уведомления: не ставить, ставить сразу, спросить при ознакомлении */
     public const TASK_MODES = ['none', 'auto', 'ask'];
     public const MAX_WATCHERS = 10;
+    public const PURPOSE_APPROVE = 'approve';
+    public const PURPOSE_CANCEL = 'cancel';
 
-    /** @var array<string, list<array<string, mixed>>> маршруты за время одного запроса */
+    /** @var array<string, list<array<string, mixed>>> маршруты за время одного запроса, по порталу и назначению */
     private array $cache = [];
 
     public function __construct(
@@ -77,6 +84,7 @@ final class RouteService
 
         return [
             'routes' => $this->all($user->portal),
+            'cancelRoutes' => $this->cancelRoutes($user->portal),
             // Все отделы: тот, кто настраивает маршруты, видит их независимо от доступа к календарю
             'departments' => $departments,
             'roles' => array_map(static fn(array $role) => ['id' => $role['id'], 'name' => $role['name']], array_values(array_filter(
@@ -96,18 +104,139 @@ final class RouteService
      */
     public function all(Portal $portal): array
     {
-        if (!isset($this->cache[$portal->memberId]))
-        {
-            $routes = array_map(fn(array $item) => $this->upgrade($portal, self::toRoute($item)), $this->storage->find($portal, Schema::ROUTES));
-            usort($routes, static fn(array $a, array $b) => [!$a['isDefault'], $a['sort'], $a['id']] <=> [!$b['isDefault'], $b['sort'], $b['id']]);
-            if (!$routes || !$routes[0]['isDefault'])
-            {
-                array_unshift($routes, $this->builtInDefault($portal));
-            }
-            $this->cache[$portal->memberId] = $routes;
-        }
+        $this->load($portal);
 
-        return $this->cache[$portal->memberId];
+        return $this->cache[$portal->memberId][self::PURPOSE_APPROVE];
+    }
+
+    /**
+     * Маршруты отзыва по сортировке; маршрута «По умолчанию» у них нет.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function cancelRoutes(Portal $portal): array
+    {
+        $this->load($portal);
+
+        return $this->cache[$portal->memberId][self::PURPOSE_CANCEL];
+    }
+
+    private function load(Portal $portal): void
+    {
+        if (isset($this->cache[$portal->memberId]))
+        {
+            return;
+        }
+        $items = $this->storage->find($portal, Schema::ROUTES);
+        if ($this->settings !== null && !$this->settings->cancelRoutesReady($portal))
+        {
+            $this->createCancelRoutes($portal, $items);
+            $items = $this->storage->find($portal, Schema::ROUTES);
+        }
+        $byPurpose = [self::PURPOSE_APPROVE => [], self::PURPOSE_CANCEL => []];
+        foreach ($items as $item)
+        {
+            $route = $this->upgrade($portal, self::toRoute($item));
+            $byPurpose[$route['purpose']][] = $route;
+        }
+        foreach ($byPurpose as &$routes)
+        {
+            usort($routes, static fn(array $a, array $b) => [!$a['isDefault'], $a['sort'], $a['id']] <=> [!$b['isDefault'], $b['sort'], $b['id']]);
+        }
+        unset($routes);
+        $approve = &$byPurpose[self::PURPOSE_APPROVE];
+        if (!$approve || !$approve[0]['isDefault'])
+        {
+            array_unshift($approve, $this->builtInDefault($portal));
+        }
+        unset($approve);
+        $this->cache[$portal->memberId] = $byPurpose;
+    }
+
+    /**
+     * Один раз на портал: демо-маршрут отзыва «руководитель → роль «Отдел кадров»» для всех видов и отделов
+     * и перенос получателей события «отменено» из маршрутов согласования в маршруты отзыва с теми же условиями.
+     *
+     * @param list<array<string, mixed>> $items записи kbroute
+     */
+    private function createCancelRoutes(Portal $portal, array $items): void
+    {
+        $hr = $this->roles->byLegacy($portal, RoleService::HR);
+        $steps = [['id' => 1, 'name' => 'Руководитель', 'kind' => self::KIND_HEAD, 'userId' => 0, 'roleId' => 0, 'submitDays' => 0, 'rejectDays' => 0, 'active' => true]];
+        if ($hr !== null)
+        {
+            $steps[] = ['id' => 2, 'name' => 'Отдел кадров', 'kind' => self::KIND_ROLE, 'userId' => 0, 'roleId' => $hr['id'], 'submitDays' => 0, 'rejectDays' => 0, 'active' => true];
+        }
+        // Демо-маршрут первым: в списке он идёт до перенесённых
+        $demoId = $this->storage->add($portal, Schema::ROUTES, 'route', self::toValues([
+            'purpose' => self::PURPOSE_CANCEL, 'isDefault' => false, 'name' => 'Отзыв по умолчанию', 'active' => true, 'exclusive' => false,
+            'kinds' => [], 'departmentIds' => [], 'steps' => $steps, 'watchers' => [],
+        ], 0));
+        foreach ($items as $item)
+        {
+            $route = self::toRoute($item);
+            if ($route['purpose'] !== self::PURPOSE_APPROVE)
+            {
+                continue;
+            }
+            $kept = [];
+            $moved = [];
+            foreach ($route['watchers'] as $watcher)
+            {
+                $events = (array)($watcher['events'] ?? []);
+                if (in_array('cancelled', $events, true))
+                {
+                    $row = $this->upgradeRow($portal, $watcher);
+                    $moved[] = [
+                        'kind' => (string)($row['kind'] ?? ''),
+                        'userId' => (int)($row['userId'] ?? 0),
+                        'roleId' => (int)($row['roleId'] ?? 0),
+                        'events' => ['cancelled'],
+                        'task' => (string)($row['task'] ?? 'none'),
+                        'taskDays' => (int)($row['taskDays'] ?? 0),
+                    ];
+                }
+                $events = array_values(array_diff($events, ['cancelled']));
+                if ($events)
+                {
+                    $kept[] = ['events' => $events] + $watcher;
+                }
+            }
+            if (!$moved)
+            {
+                continue;
+            }
+            $this->storage->update($portal, Schema::ROUTES, $route['id'], ['WATCHERS' => json_encode($kept, JSON_UNESCAPED_UNICODE)]);
+            if ($route['isDefault'])
+            {
+                $this->storage->update($portal, Schema::ROUTES, $demoId, ['WATCHERS' => json_encode($moved, JSON_UNESCAPED_UNICODE)]);
+                continue;
+            }
+            $this->storage->add($portal, Schema::ROUTES, 'route', self::toValues([
+                'purpose' => self::PURPOSE_CANCEL, 'isDefault' => false, 'name' => mb_substr('Отзыв: ' . $route['name'], 0, 100),
+                'active' => $route['active'], 'exclusive' => $route['exclusive'], 'kinds' => $route['kinds'], 'departmentIds' => $route['departmentIds'],
+                'steps' => $steps, 'watchers' => $moved,
+            ], 0));
+        }
+        $this->settings?->setCancelRoutesReady($portal);
+    }
+
+    private static function toValues(array $route, int $userId): array
+    {
+        return [
+            'ROUTE_NAME' => $route['name'],
+            'PURPOSE' => $route['purpose'],
+            'IS_DEFAULT' => $route['isDefault'] ? 'Y' : 'N',
+            'ACTIVE' => $route['active'] ? 'Y' : 'N',
+            'EXCLUSIVE' => $route['exclusive'] ? 'Y' : 'N',
+            'KINDS' => implode(',', $route['kinds']),
+            'DEPTS' => implode(',', $route['departmentIds']),
+            'SORT' => 100,
+            'STEPS' => json_encode($route['steps'], JSON_UNESCAPED_UNICODE),
+            'WATCHERS' => json_encode($route['watchers'], JSON_UNESCAPED_UNICODE),
+            'UPDATED_BY' => $userId,
+            'UPDATED_AT' => $userId ? (new \DateTimeImmutable())->format('Y-m-d H:i') : '',
+        ];
     }
 
     /**
@@ -123,7 +252,7 @@ final class RouteService
         $steps[0]['submitDays'] = $this->settings?->minSubmitDays($portal) ?? 0;
 
         return $this->upgrade($portal, [
-            'id' => 0, 'isDefault' => true, 'name' => 'По умолчанию', 'active' => true, 'exclusive' => false, 'kinds' => [], 'departmentIds' => [],
+            'id' => 0, 'purpose' => self::PURPOSE_APPROVE, 'isDefault' => true, 'name' => 'По умолчанию', 'active' => true, 'exclusive' => false, 'kinds' => [], 'departmentIds' => [],
             'sort' => 0, 'steps' => $steps, 'watchers' => [], 'updatedBy' => 0, 'updatedAt' => '',
         ]);
     }
@@ -161,7 +290,7 @@ final class RouteService
     public function usingRole(Portal $portal, int $roleId): array
     {
         $names = [];
-        foreach ($this->all($portal) as $route)
+        foreach ([...$this->all($portal), ...$this->cancelRoutes($portal)] as $route)
         {
             foreach ([...$route['steps'], ...$route['watchers']] as $row)
             {
@@ -189,9 +318,11 @@ final class RouteService
         $this->assertEditor($user);
         $portal = $user->portal;
         $routeId = (int)($data['id'] ?? 0);
-        $isDefault = self::flag($data['isDefault'] ?? false);
+        $cancel = ($data['purpose'] ?? '') === self::PURPOSE_CANCEL;
+        $purpose = $cancel ? self::PURPOSE_CANCEL : self::PURPOSE_APPROVE;
+        $isDefault = !$cancel && self::flag($data['isDefault'] ?? false);
         $existing = null;
-        foreach ($this->all($portal) as $route)
+        foreach ($cancel ? $this->cancelRoutes($portal) : $this->all($portal) as $route)
         {
             if ($isDefault ? $route['isDefault'] : $route['id'] === $routeId && !$route['isDefault'])
             {
@@ -206,6 +337,8 @@ final class RouteService
 
         $route = [
             'id' => $routeId,
+            'purpose' => $purpose,
+            'isDefault' => $isDefault,
             'name' => mb_substr(trim((string)($data['name'] ?? '')), 0, 100),
             // «По умолчанию» действует всегда, на все виды и отделы
             'active' => $isDefault || self::flag($data['active'] ?? true),
@@ -241,8 +374,9 @@ final class RouteService
             $userId = (int)($step['userId'] ?? 0);
             $roleId = (int)($step['roleId'] ?? 0);
             $name = mb_substr(trim((string)($step['name'] ?? '')), 0, 100);
-            $submitDays = (int)($step['submitDays'] ?? 0);
-            $rejectDays = (int)($step['rejectDays'] ?? 0);
+            // Срок отмены один для всех: настройка «за сколько рабочих дней», а не шаги маршрута отзыва
+            $submitDays = $cancel ? 0 : (int)($step['submitDays'] ?? 0);
+            $rejectDays = $cancel ? 0 : (int)($step['rejectDays'] ?? 0);
             if ($name === '')
             {
                 throw new VacationError($label . 'укажите название шага');
@@ -276,7 +410,8 @@ final class RouteService
         {
             throw new VacationError('В маршруте от 1 до ' . RoutePlan::MAX_STEPS . ' шагов');
         }
-        $watchers = $this->watchers($portal, (array)($data['watchers'] ?? []));
+        $route['steps'] = $steps;
+        $route['watchers'] = $this->watchers($portal, (array)($data['watchers'] ?? []), $cancel ? 'cancelled' : 'approved');
 
         $conflict = $this->exclusiveConflict($portal, $route);
         if ($conflict !== null)
@@ -284,19 +419,7 @@ final class RouteService
             throw new VacationError('Для этих видов отсутствия уже закреплён маршрут «' . $conflict . '»: единственный вариант может быть только один');
         }
 
-        $values = [
-            'ROUTE_NAME' => $route['name'],
-            'IS_DEFAULT' => $isDefault ? 'Y' : 'N',
-            'ACTIVE' => $route['active'] ? 'Y' : 'N',
-            'EXCLUSIVE' => $route['exclusive'] ? 'Y' : 'N',
-            'KINDS' => implode(',', $route['kinds']),
-            'DEPTS' => implode(',', $route['departmentIds']),
-            'SORT' => 100,
-            'STEPS' => json_encode($steps, JSON_UNESCAPED_UNICODE),
-            'WATCHERS' => json_encode($watchers, JSON_UNESCAPED_UNICODE),
-            'UPDATED_BY' => $user->userId,
-            'UPDATED_AT' => (new \DateTimeImmutable())->format('Y-m-d H:i'),
-        ];
+        $values = self::toValues($route, $user->userId);
         if ($routeId > 0)
         {
             $this->storage->update($portal, Schema::ROUTES, $routeId, $values);
@@ -316,7 +439,7 @@ final class RouteService
     public function delete(CurrentUser $user, int $routeId): array
     {
         $this->assertEditor($user);
-        $found = array_values(array_filter($this->all($user->portal), static fn(array $route) => $route['id'] === $routeId && $routeId > 0));
+        $found = array_values(array_filter([...$this->all($user->portal), ...$this->cancelRoutes($user->portal)], static fn(array $route) => $route['id'] === $routeId && $routeId > 0));
         if (!$found)
         {
             throw new VacationError('Маршрут не найден');
@@ -347,13 +470,27 @@ final class RouteService
     }
 
     /**
+     * Маршрут отзыва для утверждённого отсутствия, снимок для kbreq.CANCEL_DATA. null — не подошёл ни один
+     * или у подошедшего выключены все шаги: тогда отсутствие отменяется сразу.
+     *
+     * @return array{id: int, name: string, steps: list<array<string, mixed>>, watchers: list<array<string, mixed>>}|null
+     */
+    public function findCancelFor(Portal $portal, int $departmentId, string $kind): ?array
+    {
+        $route = RoutePlan::pick($this->cancelRoutes($portal), $kind, $this->departmentChain($portal, $departmentId));
+        $steps = $route !== null ? array_values(array_filter($route['steps'], static fn(array $step) => $step['active'])) : [];
+
+        return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers']] : null;
+    }
+
+    /**
      * Включены ли сейчас шаги маршрута: выключенный после подачи шаг пропускается и в уже поданных заявках.
      *
      * @return array<int, bool> по id шага; есть только у шагов, которые ещё существуют
      */
     public function activeFlags(Portal $portal, int $routeId): array
     {
-        foreach ($this->all($portal) as $route)
+        foreach ([...$this->all($portal), ...$this->cancelRoutes($portal)] as $route)
         {
             if ($route['id'] === $routeId)
             {
@@ -369,7 +506,7 @@ final class RouteService
      *
      * @return list<array{kind: string, userId: int, events: list<string>, task: string, taskDays: int}>
      */
-    private function watchers(Portal $portal, array $rows): array
+    private function watchers(Portal $portal, array $rows, string $event): array
     {
         if (count($rows) > self::MAX_WATCHERS)
         {
@@ -383,7 +520,8 @@ final class RouteService
             $kind = (string)($row['kind'] ?? '');
             $userId = (int)($row['userId'] ?? 0);
             $roleId = (int)($row['roleId'] ?? 0);
-            $events = array_values(array_intersect(self::EVENTS, array_map('strval', (array)($row['events'] ?? []))));
+            // Об утверждении сообщают маршруты согласования, об отмене — маршруты отзыва
+            $events = [$event];
             $task = (string)($row['task'] ?? 'none');
             $taskDays = (int)($row['taskDays'] ?? 0);
             if (!in_array($kind, self::KINDS, true))
@@ -395,10 +533,6 @@ final class RouteService
                 throw new VacationError($label . 'выберите сотрудника');
             }
             $this->assertRole($portal, $kind, $roleId, $label);
-            if (!$events)
-            {
-                throw new VacationError($label . 'выберите, о чём уведомлять');
-            }
             if (!in_array($task, self::TASK_MODES, true))
             {
                 throw new VacationError($label . 'выберите, ставить ли задачу');
@@ -466,7 +600,7 @@ final class RouteService
         {
             return null;
         }
-        foreach ($this->all($portal) as $other)
+        foreach ($route['purpose'] === self::PURPOSE_CANCEL ? $this->cancelRoutes($portal) : $this->all($portal) as $other)
         {
             if ($other['id'] === $route['id'] || !$other['exclusive'] || !$other['active'])
             {
@@ -492,6 +626,7 @@ final class RouteService
 
         return [
             'id' => (int)$item['ID'],
+            'purpose' => ($values['PURPOSE'] ?? '') === self::PURPOSE_CANCEL ? self::PURPOSE_CANCEL : self::PURPOSE_APPROVE,
             'isDefault' => ($values['IS_DEFAULT'] ?? '') === 'Y',
             'name' => (string)($values['ROUTE_NAME'] ?? ''),
             'active' => ($values['ACTIVE'] ?? '') === 'Y',

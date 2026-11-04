@@ -27,6 +27,8 @@
         cancel_auto_approve: 'согласовал отмену автоматически (уже согласовал её раньше)',
         cancel_refuse: 'отказал в отмене'
     };
+    // Действие без автора: шаг маршрута остался без согласующего, или отмена прошла без маршрута отзыва
+    var REROUTE = { reroute: 'заявка передана', cancel_reroute: 'отмена передана' };
     var ACK_EVENT = { approved: 'Отсутствие утверждено', cancelled: 'Утверждённое отсутствие отменено' };
 
     // Шаги маршрута в карточке: пройден, текущий, впереди, пропущен, на нём отказали
@@ -114,7 +116,8 @@
 
     // По маршруту вместо «На согласовании» показываем шаг: «На шаге «Юрист»»
     function status(code, request) {
-        var text = code === 'route_review' && request && request.stepName ? 'На шаге «' + request.stepName + '»' : (STATUS[code] || code);
+        var text = code === 'route_review' && request && request.stepName ? 'На шаге «' + request.stepName + '»'
+            : code === 'cancelling' && request && request.cancelStepName ? 'Отмена на шаге «' + request.cancelStepName + '»' : (STATUS[code] || code);
         return '<span class="status ' + esc(code) + '">' + esc(text) + '</span>';
     }
 
@@ -213,7 +216,7 @@
         request.then(function (data) {
             var r = data.request;
             var ids = [r.userId, r.approverId].concat(data.history.map(function (h) { return h.actorId; }));
-            (data.route ? data.route.steps : []).forEach(function (step) { ids.push(step.userId, step.actorId); });
+            (data.route ? data.route.steps : []).concat(data.cancelRoute ? data.cancelRoute.steps : []).forEach(function (step) { ids.push(step.userId, step.actorId); });
             (data.acks || []).forEach(function (a) { ids.push(a.userId); });
             return loadNames(ids).then(function () {
                 renderCard(data);
@@ -244,8 +247,12 @@
         var reasons = state.me.reasons;
         var history = data.history.map(function (h) {
             var reason = h.reason ? ': ' + (reasons[h.reason] || h.reason) : '';
-            if (h.action === 'reroute') {
-                return '<li>Шаг «' + esc(h.stepName) + '»: согласующий не найден, заявка передана — ' + esc(name(h.actorId)) + '</li>';
+            if (REROUTE[h.action]) {
+                return '<li>Шаг «' + esc(h.stepName) + '»: согласующий не найден, ' + REROUTE[h.action] + ' — ' + esc(name(h.actorId)) + '</li>';
+            }
+            if (h.action === 'cancel_immediate') {
+                return '<li>Отсутствие отменено без согласования: ' + (h.reason === 'self'
+                    ? 'в маршруте отзыва согласовать может только сам сотрудник' : 'нет подходящего маршрута отзыва') + '</li>';
             }
             return '<li>' + esc(name(h.actorId)) + ' ' + esc(ACTION[h.action] || h.action)
                 + (h.stepName ? ' на шаге «' + esc(h.stepName) + '»' : '') + esc(reason) + '</li>';
@@ -264,7 +271,7 @@
             + '<dt>Даты</dt><dd>' + esc(period(r)) + '</dd>'
             + '<dt>Дней</dt><dd>' + esc(r.days) + '</dd>'
             + '<dt>Статус</dt><dd>' + status(r.status, r)
-            + (r.status === 'cancelling' ? ', ' + esc(CANCEL_STEP[r.cancelStep] || '') : '')
+            + (r.status === 'cancelling' && CANCEL_STEP[r.cancelStep] ? ', ' + esc(CANCEL_STEP[r.cancelStep]) : '')
             + (r.approverId ? ', решение принимает ' + esc(name(r.approverId)) : '') + '</dd>'
             + (r.cancelReason && (r.status === 'cancelling' || r.status === 'cancelled') ? '<dt>Причина отмены</dt><dd>' + esc(r.cancelReason) + '</dd>' : '')
             + (r.status === 'approved' || r.status === 'cancelling' || r.calError ? '<dt>График и календарь</dt><dd>' + calendarState(r) + '</dd>' : '')
@@ -282,7 +289,8 @@
             + (data.cancelHint ? '<p class="hint">' + esc(data.cancelHint) + '</p>' : '')
             + (data.rejectBlocked ? '<p class="hint">' + esc(data.rejectBlocked) + '</p>' : '')
             + ackBlock(data)
-            + routeSteps(data.route)
+            + routeSteps(data.cancelRoute, 'Маршрут отзыва')
+            + routeSteps(data.route, 'Маршрут')
             + '<h2>История</h2><ul>' + history + '</ul>'
             + '</div>';
 
@@ -300,14 +308,14 @@
                 }[action];
                 payload = payload ? payload() : {};
                 button.disabled = true;
-                api('/api/requests/' + r.id + '/' + action, payload).then(function () {
+                api('/api/requests/' + r.id + '/' + action, payload).then(function (result) {
                     openCard(r.id);
                     loadToApprove();
                     showMessage({
                         approve: 'Заявка согласована',
                         reject: 'Заявка отклонена',
                         withdraw: 'Заявка отозвана',
-                        cancel: 'Отмена отправлена на согласование',
+                        cancel: result && result.status === 'cancelled' ? 'Отсутствие отменено' : 'Отмена отправлена на согласование',
                         'cancel-approve': 'Отмена согласована',
                         'cancel-refuse': 'В отмене отказано',
                         'calendar-retry': 'Событие добавляется, обновите карточку через несколько секунд',
@@ -350,11 +358,11 @@
         }).join('') + '</ul>';
     }
 
-    function routeSteps(route) {
+    function routeSteps(route, title) {
         if (!route) {
             return '';
         }
-        return '<h2>Маршрут «' + esc(route.name) + '»</h2><ol class="card-steps">' + route.steps.map(function (step) {
+        return '<h2>' + esc(title) + ' «' + esc(route.name) + '»</h2><ol class="card-steps">' + route.steps.map(function (step) {
             var who = step.actorId ? name(step.actorId) : (step.kind === 'user' ? name(step.userId)
                 : step.kind === 'role' ? 'роль «' + step.roleName + '»' : STEP_KIND[step.kind] || '');
             return '<li class="step-' + esc(step.state) + '"><span class="step-mark">' + STEP_MARK[step.state] + '</span> <b>' + esc(step.name) + '</b> — '

@@ -161,26 +161,27 @@ final class AccessTest extends TestCase
         $this->roles->save($this->user(100), ['name' => 'Своя', 'tabs' => self::NONE]);
     }
 
-    public function testBaseAndLegacyRolesAreNotDeleted(): void
+    public function testBaseRoleIsNotDeletedAndOthersAre(): void
     {
         $roles = $this->roles->all($this->portal);
-        foreach ([$roles[0], $this->roles->byLegacy($this->portal, RoleService::HR)] as $role)
+        try
         {
-            try
-            {
-                $this->roles->delete($this->user(1, true), $role['id']);
-                self::fail('Удалил роль «' . $role['name'] . '»');
-            }
-            catch (VacationError)
-            {
-            }
+            $this->roles->delete($this->user(1, true), $roles[0]['id']);
+            self::fail('Удалил роль «' . $roles[0]['name'] . '»');
         }
+        catch (VacationError)
+        {
+        }
+        // Прежние роли удаляются, если их нет в маршрутах
+        $this->roles->delete($this->user(1, true), $this->roles->byLegacy($this->portal, RoleService::HR)['id']);
+        $this->rebuild();
+        self::assertNull($this->roles->byLegacy($this->portal, RoleService::HR));
         $id = $this->saveRole(['name' => 'Временная']);
         $this->roles->delete($this->user(1, true), $id);
         $this->rebuild();
         self::assertNull($this->roles->byId($this->portal, $id));
 
         $this->expectExceptionMessage('уже есть');
-        $this->saveRole(['name' => 'отдел кадров']);
+        $this->saveRole(['name' => 'сотрудник']);
     }
 }
