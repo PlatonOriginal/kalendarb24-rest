@@ -97,7 +97,10 @@ final class FakePortal implements HttpTransport
         return match ($method)
         {
             'department.get' => ['result' => $this->departments],
-            'user.get' => ['result' => array_map(fn($id) => [
+            'user.get' => isset($params['filter']['UF_DEPARTMENT']) ? ['result' => array_values(array_map(static fn($id) => ['ID' => (string)$id], array_keys(array_filter(
+                $this->userDepartments,
+                static fn(array $departments) => in_array((int)$params['filter']['UF_DEPARTMENT'], $departments, true),
+            ))))] : ['result' => array_map(fn($id) => [
                 'ID' => (string)$id,
                 'NAME' => 'Имя' . $id,
                 'LAST_NAME' => 'Фамилия' . $id,

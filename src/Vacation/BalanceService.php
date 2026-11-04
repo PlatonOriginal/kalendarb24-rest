@@ -11,7 +11,7 @@ use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 
 /**
- * Остаток ежегодного отпуска, как в коробке. Отдел кадров вносит остаток на дату и дату приёма; в каждую годовщину
+ * Остаток ежегодного отпуска, как в коробке. Тот, кому доступна вкладка «Остатки» на изменение, вносит остаток на дату и дату приёма; в каждую годовщину
  * приёма после этой даты добавляется годовая норма из настроек, а заявки с началом не раньше этой даты остаток уменьшают.
  * Если остаток сотруднику не внесён, ограничения нет.
  * Остаток и дата приёма хранятся одной записью kbbal на сотрудника (в коробке это две таблицы).
@@ -30,19 +30,19 @@ final class BalanceService
     }
 
     /**
-     * Править остатки и даты приёма может отдел кадров и администратор.
+     * Править остатки и даты приёма: роли с правом изменять вкладку «Остатки» и администратор.
      */
     public function canEdit(CurrentUser $user): bool
     {
-        return $user->isAdmin || in_array($user->userId, $this->roles->roles($user->portal)['hr'], true);
+        return $this->roles->can($user, 'balances', RoleService::EDIT);
     }
 
     /**
-     * Смотреть остатки всех сотрудников: ещё и директор (бухгалтерия появится вместе со своей ролью).
+     * Смотреть остатки всех сотрудников: роли с доступом к вкладке «Остатки».
      */
     public function canView(CurrentUser $user): bool
     {
-        return $this->canEdit($user) || $user->userId === $this->roles->roles($user->portal)['director'];
+        return $this->roles->can($user, 'balances', RoleService::VIEW);
     }
 
     /**
@@ -69,7 +69,7 @@ final class BalanceService
     {
         if (!$this->canView($user))
         {
-            throw new VacationError('Остатки отпуска видят отдел кадров, директор и администратор');
+            throw new VacationError('Нет доступа к вкладке «Остатки»');
         }
         $portal = $user->portal;
         $records = $this->records($portal);
@@ -99,7 +99,7 @@ final class BalanceService
     {
         if (!$this->canEdit($user))
         {
-            throw new VacationError('Остатки отпуска и даты приёма правит отдел кадров');
+            throw new VacationError('Остатки отпуска и даты приёма правят роли с правом изменять «Остатки» на вкладке «Доступ»');
         }
         $this->write($user, $userId, $days, $asOf, $comment, $hireDate);
         $record = $this->records($user->portal, $userId)[$userId] ?? $this->emptyRecord($userId);
@@ -120,7 +120,7 @@ final class BalanceService
     {
         if (!$this->canEdit($user))
         {
-            throw new VacationError('Остатки отпуска и даты приёма загружает отдел кадров');
+            throw new VacationError('Остатки отпуска и даты приёма загружают роли с правом изменять «Остатки» на вкладке «Доступ»');
         }
         if (count($rows) > 1000)
         {

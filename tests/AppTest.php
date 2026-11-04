@@ -23,7 +23,7 @@ final class AppTest extends TestCase
 
         $structure = new StructureService($rest);
         $storage = new EntityStorage($rest);
-        $roles = new RoleService($storage);
+        $roles = new RoleService($storage, $structure);
 
         return new App($store, $oauth, $rest, new UserResolver($store, $rest), $structure, $storage, $roles,
             new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates', $appUrl);

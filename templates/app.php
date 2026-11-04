@@ -17,7 +17,8 @@
     <a href="#balances" data-tab="balances" hidden>Остатки</a>
     <a href="#routes" data-tab="routes" hidden>Маршруты</a>
     <a href="#settings" data-tab="settings" hidden>Настройки</a>
-    <a href="#checks" data-tab="checks">Проверки</a>
+    <a href="#access" data-tab="access" hidden>Доступ</a>
+    <a href="#checks" data-tab="checks" hidden>Проверки</a>
 </nav>
 <p id="message" class="message" hidden></p>
 
@@ -71,33 +72,28 @@
     <div id="card"></div>
 </section>
 
+<section id="tab-access" hidden>
+    <div id="access"></div>
+</section>
+
 <section id="tab-settings" hidden>
-    <h2>Роли</h2>
-    <p class="hint">Директор утверждает заявки последним. Отдел кадров проверяет заявки после руководителя, заявка достаётся сотруднику ОК с наименьшим числом заявок на проверке.</p>
-    <table class="list">
-        <tr><th>Директор</th><td id="role-director"></td><td><button type="button" id="pick-director">Выбрать</button></td></tr>
-        <tr><th>Отдел кадров</th><td id="role-hr"></td><td><button type="button" id="pick-hr">Выбрать</button></td></tr>
-    </table>
+    <p class="hint" id="settings-readonly" hidden>Вам доступен только просмотр настроек.</p>
     <h2>Срок подачи заявки</h2>
     <p class="hint">За сколько дней до начала подавать заявку, задаётся в шагах маршрутов на вкладке «Маршруты», в том числе в маршруте «По умолчанию».</p>
     <div class="form">
         <label class="check"><input type="checkbox" id="min-submit-exempt-unpaid"> Не проверять срок подачи для отпуска без сохранения заработной платы</label>
     </div>
     <h2>Отмена утверждённого отсутствия</h2>
-    <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем отдел кадров; после этого событие удаляется из календаря.</p>
+    <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем участник роли «Отдел кадров» с вкладки «Доступ» (пока у отмены нет своих маршрутов); после этого событие удаляется из календаря.</p>
     <div class="form">
         <label>Не позже чем за, раб. дней <input type="number" id="cancel-days" min="0" max="365"></label>
     </div>
     <h2>Ежегодный отпуск</h2>
-    <p class="hint">Сколько календарных дней начисляется в каждую годовщину приёма на работу (от 28 до 100). Остатки и даты приёма вносит отдел кадров на вкладке «Остатки».</p>
+    <p class="hint">Сколько календарных дней начисляется в каждую годовщину приёма на работу (от 28 до 100). Остатки и даты приёма вносят на вкладке «Остатки».</p>
     <div class="form">
         <label>Дней за рабочий год <input type="number" id="annual-days" min="28" max="100"></label>
     </div>
-    <h2>Календарь</h2>
-    <div class="form">
-        <label class="check"><input type="checkbox" id="see-other-departments"> Сотрудники видят календарь других отделов</label>
-    </div>
-    <p class="hint">Без этой настройки сотрудник видит свой отдел и отделы, которыми руководит. Директор, отдел кадров и администратор видят все отделы.</p>
+    <p class="hint">Какие отделы видны в календаре и чьи заявки открываются, задаётся в ролях на вкладке «Доступ».</p>
     <p><button type="button" id="save-options">Сохранить настройки</button></p>
     <h2>Лимиты отделов</h2>
     <p class="hint">Пустое поле — без ограничения. Лимит проверяется при подаче заявки, руководитель отдела в нём не считается, если не отмечено «Учитывать руководителя».
@@ -126,6 +122,7 @@
 <script src="/assets/calendar.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/calendar.js') ?>"></script>
 <script src="/assets/balance.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/balance.js') ?>"></script>
 <script src="/assets/routes.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/routes.js') ?>"></script>
+<script src="/assets/access.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/access.js') ?>"></script>
 <script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
 <script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>
 </body>

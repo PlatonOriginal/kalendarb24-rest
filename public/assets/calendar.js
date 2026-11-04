@@ -81,7 +81,7 @@ window.Kb24Calendar = (function () {
             + '<div><b>Вид отсутствия</b><ul>' + types + '</ul></div>'
             + '<div><b>Статус заявки</b><ul>'
             + '<li><i class="st-pending" style="--c:' + sample + '"></i>у руководителя</li>'
-            + '<li><i class="st-progress" style="--c:' + sample + '"></i>в отделе кадров или у директора</li>'
+            + '<li><i class="st-progress" style="--c:' + sample + '"></i>на следующих шагах согласования</li>'
             + '<li><i class="st-approved" style="--c:' + sample + '"></i>утверждено</li>'
             + '<li><i class="kb-legend-full"></i>лимит отдела исчерпан</li>'
             + '</ul></div></div>';

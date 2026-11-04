@@ -43,27 +43,29 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/requests              (POST kind, dateFrom, dateTo) подать заявку
  *   /api/requests/<id>         карточка заявки с историей и доступными действиями
  *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
- *   /api/settings/roles        (POST, администратор) директор и сотрудники ОК
- *   /api/settings/options      (POST max_cancel_working_days, employees_see_other_departments, annual_days, администратор) настройки в app.option
+ *   /api/settings/options      (POST max_cancel_working_days, annual_days, min_submit_exempt_unpaid; право изменять «Настройки») настройки в app.option
  *   /api/requests/<id>/cancel (reason) | cancel-approve | cancel-refuse (reason)   (POST) отмена утверждённой заявки
  * Блок 4:
  *   уведомления о заявках уходят после ответа браузеру; ссылка из уведомления открывает /app
  *   через встройку REST_APP_URI с PLACEMENT_OPTIONS {"req": "<ID>"}
  * Блок 6:
  *   /api/calendar          (POST department, from, to) заявки отдела за период и дни, когда лимит исчерпан
- *   /api/settings/limits   (POST limits: JSON [{department, maxConcurrent, maxOverlap, withSub, withHead}], администратор)
+ *   /api/settings/limits   (POST limits: JSON [{department, maxConcurrent, maxOverlap, withSub, withHead}], право изменять «Настройки»)
  * Блок 7:
- *   /api/balances          остатки и даты приёма (ОК, директор, администратор); сотрудников и ФИО браузер берёт сам
- *   /api/balances/save     (POST userId, days, asOf, comment, hireDate) остаток и дата приёма одного сотрудника (ОК, администратор)
- *   /api/balances/import   (POST rows: JSON [{line, userId, hireDate, days, asOf, comment}]) загрузка из CSV (ОК, администратор)
+ *   /api/balances          остатки и даты приёма (доступ к вкладке «Остатки»); сотрудников и ФИО браузер берёт сам
+ *   /api/balances/save     (POST userId, days, asOf, comment, hireDate) остаток и дата приёма одного сотрудника (право изменять «Остатки»)
+ *   /api/balances/import   (POST rows: JSON [{line, userId, hireDate, days, asOf, comment}]) загрузка из CSV (право изменять «Остатки»)
  *   /api/requests/mine     отдаёт ещё и мой остаток для подсказки в форме заявки
- * Блок 8, маршруты (администратор и сотрудники из списка на вкладке «Маршруты»):
- *   /api/routes            маршруты с шагами, кто их настраивает, срок подачи по умолчанию
+ * Блок 8, маршруты (доступ к вкладке «Маршруты», изменять — с правом изменять):
+ *   /api/routes            маршруты с шагами, роли для шагов, отделы
  *   /api/routes/save       (POST route: JSON {id, name, active, exclusive, kinds, departmentIds, steps}) сохранить маршрут
  *   /api/routes/delete     (POST id) удалить маршрут
- *   /api/routes/editors    (POST ids: через запятую) кто ещё настраивает маршруты
  *   /api/requests/<id>/acknowledge  (POST task: 1, deadline: Y-m-d) ознакомился с результатом, по желанию поставить себе задачу
  *   /api/requests/approve  отдаёт ещё и acks: заявки, с результатом которых нужно ознакомиться
+ * Доступ (вкладка «Доступ»):
+ *   /api/access            роли, вкладки и уровни, отделы
+ *   /api/access/save       (POST role: JSON {id, name, userIds, departmentIds, tabs, scope}) сохранить роль
+ *   /api/access/delete     (POST id) удалить роль
  */
 final class App
 {
@@ -180,9 +182,14 @@ final class App
                 (bool)preg_match('~^/api/requests/(\d+)$~', $path, $m) => $this->json($this->requests->card($this->currentUser($server), (int)$m[1])),
                 (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse|calendar-retry|acknowledge)$~', $path, $m) && $this->isPost($server)
                     => $this->json($this->decide($this->currentUser($server), (int)$m[1], $m[2], $post)),
-                $path === '/api/settings/roles' && $this->isPost($server) => $this->json($this->saveRoles($this->currentAdmin($server), $post)),
-                $path === '/api/settings/options' && $this->isPost($server) => $this->json($this->saveOptions($this->currentAdmin($server), $post)),
-                $path === '/api/settings/limits' && $this->isPost($server) => $this->json($this->saveLimits($this->currentAdmin($server), $post)),
+                $path === '/api/settings/options' && $this->isPost($server) => $this->json($this->saveOptions($this->settingsEditor($server), $post)),
+                $path === '/api/settings/limits' && $this->isPost($server) => $this->json($this->saveLimits($this->settingsEditor($server), $post)),
+                $path === '/api/access' => $this->json($this->roles->list($this->currentUser($server))),
+                $path === '/api/access/save' && $this->isPost($server) => $this->json($this->roles->save(
+                    $this->currentUser($server),
+                    (array)json_decode((string)($post['role'] ?? ''), true),
+                )),
+                $path === '/api/access/delete' && $this->isPost($server) => $this->json($this->deleteRole($this->currentUser($server), (int)($post['id'] ?? 0))),
                 $path === '/api/calendar' && $this->isPost($server) && $this->calendar !== null => $this->json($this->calendar->get(
                     $this->currentUser($server),
                     (int)($post['department'] ?? 0),
@@ -196,10 +203,6 @@ final class App
                 )),
                 $path === '/api/routes/delete' && $this->isPost($server) && $this->routes !== null
                     => $this->json($this->routes->delete($this->currentUser($server), (int)($post['id'] ?? 0))),
-                $path === '/api/routes/editors' && $this->isPost($server) && $this->routes !== null => $this->json($this->routes->saveEditors(
-                    $this->currentUser($server),
-                    array_map('intval', array_filter(explode(',', (string)($post['ids'] ?? '')))),
-                )),
                 default => $this->notFound(),
             };
         }
@@ -365,19 +368,44 @@ final class App
 
     private function vacation(CurrentUser $user): array
     {
+        $access = $this->roles->permissions($user);
+        $settings = $this->roles->can($user, 'settings');
+
         return [
             'userId' => $user->userId,
             'isAdmin' => $user->isAdmin,
-            'roles' => $this->roles->roles($user->portal),
+            // Уровень доступа к вкладкам (none, view, edit) и чьи заявки видны
+            'access' => $access['tabs'],
+            'scope' => $access['scope'],
             'kinds' => array_map(static fn(array $kind) => $kind['name'], Kinds::all()),
             'reasons' => RejectReasons::all(),
-            // Только администратору для вкладки «Настройки»: остальным лишний вызов REST при каждом открытии ни к чему
-            'settings' => $user->isAdmin ? ($this->settings?->all($user->portal) ?? Settings::DEFAULTS) : null,
-            'limits' => $user->isAdmin && $this->limits !== null ? $this->limitsByDepartment($user) : null,
+            // Только тем, кому открыты «Настройки»: остальным лишний вызов REST при каждом открытии ни к чему
+            'settings' => $settings ? ($this->settings?->all($user->portal) ?? Settings::DEFAULTS) : null,
+            'limits' => $settings && $this->limits !== null ? $this->limitsByDepartment($user) : null,
+            // Для лимитов на вкладке «Настройки» и фильтра на «Остатках»: все отделы, независимо от того, какие видны в календаре
+            'departments' => $settings || ($this->balances?->canView($user) ?? false) ? $this->departmentTree($user) : null,
             'calendar' => $this->calendar?->departments($user),
             'balances' => $this->balances !== null && $this->balances->canView($user),
-            'canEditRoutes' => $this->routes !== null && $this->routes->canEdit($user),
         ];
+    }
+
+    /**
+     * @return list<array{id: int, name: string, depth: int}>
+     */
+    private function departmentTree(CurrentUser $user): array
+    {
+        $departments = [];
+        foreach ($this->structure->orgChart($user->portal)->tree() as ['department' => $department, 'depth' => $depth])
+        {
+            $departments[] = ['id' => $department->id, 'name' => $department->name, 'depth' => $depth];
+        }
+
+        return $departments;
+    }
+
+    private function deleteRole(CurrentUser $user, int $roleId): array
+    {
+        return $this->roles->delete($user, $roleId, $this->routes?->usingRole($user->portal, $roleId) ?? []);
     }
 
     /**
@@ -463,10 +491,6 @@ final class App
         {
             $this->settings->setMinSubmitExemptUnpaid($user->portal, $post['min_submit_exempt_unpaid'] === '1');
         }
-        if (isset($post['employees_see_other_departments']))
-        {
-            $this->settings->setEmployeesSeeOtherDepartments($user->portal, $post['employees_see_other_departments'] === '1');
-        }
 
         return $this->settings->all($user->portal);
     }
@@ -489,16 +513,6 @@ final class App
             'calendar-retry' => $this->requests->retryCalendar($user, $id),
             'acknowledge' => $this->requests->acknowledge($user, $id, ($post['task'] ?? '') === '1', (string)($post['deadline'] ?? '')),
         };
-    }
-
-    private function saveRoles(CurrentUser $user, array $post): array
-    {
-        $director = (int)($post['director'] ?? 0);
-        $hr = array_map('intval', array_filter(explode(',', (string)($post['hr'] ?? ''))));
-        $this->roles->set($user->portal, RoleService::DIRECTOR, $director > 0 ? [$director] : []);
-        $this->roles->set($user->portal, RoleService::HR, $hr);
-
-        return $this->roles->roles($user->portal);
     }
 
     private function ensureStorage(Portal $portal, bool $force = false): void
@@ -613,6 +627,17 @@ final class App
             'deleted' => $afterDelete === [],
             'milliseconds' => $milliseconds,
         ];
+    }
+
+    private function settingsEditor(array $server): CurrentUser
+    {
+        $user = $this->currentUser($server);
+        if (!$this->roles->can($user, 'settings', RoleService::EDIT))
+        {
+            throw new AccessDenied('Настройки меняют администратор портала и роли с правом изменять «Настройки»');
+        }
+
+        return $user;
     }
 
     private function currentAdmin(array $server): CurrentUser

@@ -15,6 +15,9 @@ final class StructureService
     /** @var array<int, list<int>> */
     private array $userDepartments = [];
 
+    /** @var array<string, array<int, list<int>>> сотрудники отдела по member_id */
+    private array $departmentUsers = [];
+
     /** @var array<string, OrgChart> структура за время одного запроса, по member_id */
     private array $charts = [];
 
@@ -48,6 +51,32 @@ final class StructureService
         }
 
         return $this->userDepartments[$userId];
+    }
+
+    /**
+     * Сотрудники отделов (только сами отделы, подотделы передаёт вызывающий). Только ID, без ФИО.
+     * https://apidocs.bitrix24.com/api-reference/user/user-get.html
+     *
+     * @param list<int> $departmentIds
+     * @return list<int>
+     */
+    public function usersIn(Portal $portal, array $departmentIds): array
+    {
+        $ids = [];
+        foreach ($departmentIds as $departmentId)
+        {
+            if (!isset($this->departmentUsers[$portal->memberId][$departmentId]))
+            {
+                $rows = $this->rest->listAll($portal, 'user.get', [
+                    'filter' => ['UF_DEPARTMENT' => $departmentId, 'ACTIVE' => true],
+                    'select' => ['ID'],
+                ]);
+                $this->departmentUsers[$portal->memberId][$departmentId] = array_map(static fn(array $row) => (int)$row['ID'], $rows);
+            }
+            $ids = array_merge($ids, $this->departmentUsers[$portal->memberId][$departmentId]);
+        }
+
+        return array_values(array_unique($ids));
     }
 
     /**

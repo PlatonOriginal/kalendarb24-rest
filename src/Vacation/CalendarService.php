@@ -9,8 +9,8 @@ use Kb24Rest\Structure\StructureService;
 
 /**
  * Календарь отдела, как в коробке: кто из отдела отсутствует и в какие дни лимит отдела исчерпан.
- * Видимость тоже как в коробке: директор, ОК и администратор видят все отделы, остальные свой отдел
- * и отделы, которыми руководят, если в настройках не разрешено видеть все.
+ * Видимость задают роли на вкладке «Доступ»: свой отдел, свой отдел с подотделами или вся компания;
+ * руководитель видит и отделы, которыми руководит. Без доступа к вкладке «Календарь» отделов нет.
  * Сотрудников отдела и их ФИО браузер получает сам через user.get, сервер отдаёт только ID.
  */
 final class CalendarService
@@ -94,17 +94,11 @@ final class CalendarService
      */
     public function visibleDepartmentIds(CurrentUser $user): array
     {
-        $portal = $user->portal;
-        $chart = $this->structure->orgChart($portal);
-        $roles = $this->roles->roles($portal);
-        $wholeCompany = $user->isAdmin || $user->userId === $roles['director'] || in_array($user->userId, $roles['hr'], true)
-            || ($this->settings?->employeesSeeOtherDepartments($portal) ?? false);
-        if ($wholeCompany)
+        if (!$this->roles->can($user, 'calendar'))
         {
-            return array_keys($chart->all());
+            return [];
         }
-        $own = $this->structure->departmentsOf($portal, $user->userId)[0] ?? null;
 
-        return array_values(array_unique(array_merge($own !== null ? [$own] : [], $chart->headedBy($user->userId))));
+        return $this->roles->visibleDepartments($user) ?? array_keys($this->structure->orgChart($user->portal)->all());
     }
 }

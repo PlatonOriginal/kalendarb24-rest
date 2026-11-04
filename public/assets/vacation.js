@@ -14,7 +14,7 @@
     };
     var CANCEL_STEP = {
         head_review: 'отмену согласует руководитель',
-        hr_review: 'отмену согласует отдел кадров'
+        hr_review: 'отмену согласует роль «Отдел кадров»'
     };
     var ACTION = {
         create: 'подал заявку',
@@ -32,7 +32,7 @@
     // Шаги маршрута в карточке: пройден, текущий, впереди, пропущен, на нём отказали
     var STEP_MARK = { done: '✓', current: '●', next: '○', skipped: '–', rejected: '✕' };
     var STEP_STATE = { done: 'согласовано', current: 'сейчас здесь', next: 'впереди', skipped: 'пропущен', rejected: 'отклонено' };
-    var STEP_KIND = { head: 'руководитель по структуре', hr: 'отдел кадров', director: 'директор' };
+    var STEP_KIND = { head: 'руководитель по структуре', hr: 'роль «Отдел кадров»', director: 'роль «Директор»' };
 
     var state = { me: null, names: {}, checksDone: false };
 
@@ -118,11 +118,13 @@
         return '<span class="status ' + esc(code) + '">' + esc(text) + '</span>';
     }
 
-    var TABS = ['calendar', 'requests', 'approve', 'acks', 'balances', 'routes', 'settings', 'checks'];
+    var TABS = ['calendar', 'requests', 'approve', 'acks', 'balances', 'routes', 'settings', 'access', 'checks'];
 
     function openTab(tab) {
-        if (TABS.indexOf(tab) < 0) {
-            tab = 'calendar';
+        var link = document.querySelector('.tabs a[data-tab="' + tab + '"]');
+        if (TABS.indexOf(tab) < 0 || !link || link.hidden) {
+            // Вкладка закрыта ролями: открываем календарь, а без него — свои заявки
+            tab = document.querySelector('[data-tab="calendar"]').hidden ? 'requests' : 'calendar';
         }
         TABS.concat(['card']).forEach(function (name) {
             el('tab-' + name).hidden = name !== tab;
@@ -142,9 +144,10 @@
         } else if (tab === 'approve' || tab === 'acks') {
             loadToApprove();
         } else if (tab === 'settings') {
-            renderRoles();
             renderOptions();
             renderLimits();
+        } else if (tab === 'access') {
+            window.Kb24Access.show();
         } else if (tab === 'checks' && !state.checksDone) {
             state.checksDone = true;
             window.Kb24Checks.run();
@@ -243,7 +246,7 @@
         var history = data.history.map(function (h) {
             var reason = h.reason ? ': ' + (reasons[h.reason] || h.reason) : '';
             if (h.action === 'reroute') {
-                return '<li>Шаг «' + esc(h.stepName) + '»: согласующий не найден, заявка передана в отдел кадров — ' + esc(name(h.actorId)) + '</li>';
+                return '<li>Шаг «' + esc(h.stepName) + '»: согласующий не найден, заявка передана — ' + esc(name(h.actorId)) + '</li>';
             }
             return '<li>' + esc(name(h.actorId)) + ' ' + esc(ACTION[h.action] || h.action)
                 + (h.stepName ? ' на шаге «' + esc(h.stepName) + '»' : '') + esc(reason) + '</li>';
@@ -353,25 +356,20 @@
             return '';
         }
         return '<h2>Маршрут «' + esc(route.name) + '»</h2><ol class="card-steps">' + route.steps.map(function (step) {
-            var who = step.actorId ? name(step.actorId) : (step.kind === 'user' ? name(step.userId) : STEP_KIND[step.kind] || '');
+            var who = step.actorId ? name(step.actorId) : (step.kind === 'user' ? name(step.userId)
+                : step.kind === 'role' ? 'роль «' + step.roleName + '»' : STEP_KIND[step.kind] || '');
             return '<li class="step-' + esc(step.state) + '"><span class="step-mark">' + STEP_MARK[step.state] + '</span> <b>' + esc(step.name) + '</b> — '
                 + esc(who) + ', ' + esc(STEP_STATE[step.state])
                 + (step.rejectUntil ? ', отклонить можно до ' + esc(formatDate(step.rejectUntil)) : '') + '</li>';
         }).join('') + '</ol>';
     }
 
-    function renderRoles() {
-        var roles = state.me.roles;
-        loadNames([roles.director].concat(roles.hr)).then(function () {
-            el('role-director').textContent = roles.director ? name(roles.director) : 'не выбран';
-            el('role-hr').textContent = roles.hr.length ? roles.hr.map(name).join(', ') : 'не выбраны';
-            BX24.fitWindow();
-        });
-    }
-
     function renderOptions() {
+        // Только просмотр: поля и кнопки настроек недоступны
+        var readOnly = state.me.access.settings !== 'edit';
+        el('settings-readonly').hidden = !readOnly;
+        el('tab-settings').querySelectorAll('input, button').forEach(function (input) { input.disabled = readOnly; });
         el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
-        el('see-other-departments').checked = !!(state.me.settings && state.me.settings.employees_see_other_departments);
         el('annual-days').value = state.me.settings ? state.me.settings.annual_days : '';
         el('min-submit-exempt-unpaid').checked = !!(state.me.settings && state.me.settings.min_submit_exempt_unpaid);
     }
@@ -379,7 +377,6 @@
     function saveOptions() {
         api('/api/settings/options', {
             max_cancel_working_days: el('cancel-days').value,
-            employees_see_other_departments: el('see-other-departments').checked ? '1' : '0',
             annual_days: el('annual-days').value,
             min_submit_exempt_unpaid: el('min-submit-exempt-unpaid').checked ? '1' : '0'
         }).then(function (settings) {
@@ -389,11 +386,11 @@
         }).catch(showError);
     }
 
-    // Лимиты отделов: пустое поле — без ограничения. Администратор видит все отделы
+    // Лимиты отделов: пустое поле — без ограничения. В настройках видны все отделы
     function renderLimits() {
         var limits = state.me.limits || {};
         var body = document.querySelector('#limits tbody');
-        body.innerHTML = state.me.calendar.departments.map(function (d) {
+        body.innerHTML = (state.me.departments || []).map(function (d) {
             var limit = limits['d' + d.id] || { maxConcurrent: null, maxOverlap: null, withSub: false, withHead: false };
             return '<tr data-department="' + d.id + '">'
                 + '<td>' + new Array(d.depth + 1).join('\u00a0\u00a0\u00a0') + esc(d.name) + '</td>'
@@ -438,14 +435,6 @@
         }).catch(showError).then(function () { button.disabled = false; });
     }
 
-    function saveRoles(director, hr) {
-        api('/api/settings/roles', { director: director || '', hr: hr.join(',') }).then(function (roles) {
-            state.me.roles = roles;
-            renderRoles();
-            showMessage('Роли сохранены');
-        }).catch(showError);
-    }
-
     function bindForm() {
         var form = el('new-request');
         form.kind.innerHTML = Object.keys(state.me.kinds).map(function (code) {
@@ -473,27 +462,6 @@
                 .then(function () { button.disabled = false; });
         });
 
-        function pick(title, multiple, ids, anchor) {
-            var selected = ids.filter(Boolean).map(function (id) { return { id: id, name: name(id) }; });
-            return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected, anchor: anchor }).then(function (users) {
-                (users || []).forEach(function (user) { state.names[user.id] = user.name; });
-                return users;
-            });
-        }
-        el('pick-director').addEventListener('click', function () {
-            pick('Директор', false, [state.me.roles.director], el('pick-director').closest('tr')).then(function (users) {
-                if (users) {
-                    saveRoles(users.length ? users[0].id : null, state.me.roles.hr);
-                }
-            });
-        });
-        el('pick-hr').addEventListener('click', function () {
-            pick('Отдел кадров', true, state.me.roles.hr, el('pick-hr').closest('tr')).then(function (users) {
-                if (users) {
-                    saveRoles(state.me.roles.director, users.map(function (user) { return user.id; }));
-                }
-            });
-        });
         el('save-options').addEventListener('click', saveOptions);
         el('save-limits').addEventListener('click', saveLimits);
         el('card-back').addEventListener('click', function (event) {
@@ -513,9 +481,11 @@
         var card = linked ? api('/api/requests/' + linked) : null;
         api('/api/vacation').then(function (me) {
             state.me = me;
-            document.querySelector('[data-tab="settings"]').hidden = !me.isAdmin;
-            document.querySelector('[data-tab="balances"]').hidden = !me.balances;
-            document.querySelector('[data-tab="routes"]').hidden = !me.canEditRoutes;
+            // Вкладки открывают роли на вкладке «Доступ»; «Проверки» только администратору портала
+            ['calendar', 'balances', 'routes', 'settings', 'access'].forEach(function (tab) {
+                document.querySelector('[data-tab="' + tab + '"]').hidden = me.access[tab] === 'none';
+            });
+            document.querySelector('[data-tab="checks"]').hidden = !me.isAdmin;
             bindForm();
             window.Kb24Balance.init({
                 api: api,
@@ -530,6 +500,15 @@
                 api: api,
                 esc: esc,
                 me: function () { return state.me; },
+                loadNames: loadNames,
+                name: name,
+                rememberName: function (id, text) { state.names[id] = text; },
+                showError: showError,
+                showMessage: showMessage
+            });
+            window.Kb24Access.init({
+                api: api,
+                esc: esc,
                 loadNames: loadNames,
                 name: name,
                 rememberName: function (id, text) { state.names[id] = text; },
@@ -563,6 +542,7 @@
             loadToApprove();
         }).catch(function (error) {
             showError(error);
+            document.querySelector('[data-tab="checks"]').hidden = false;
             openTab('checks');
         });
     });
