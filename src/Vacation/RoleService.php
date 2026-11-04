@@ -45,6 +45,13 @@ final class RoleService
         'routes' => ['name' => 'Маршруты', 'levels' => [self::NONE, self::VIEW, self::EDIT]],
         'settings' => ['name' => 'Настройки', 'levels' => [self::NONE, self::VIEW, self::EDIT]],
         'access' => ['name' => 'Доступ', 'levels' => [self::NONE, self::VIEW, self::EDIT]],
+        // Не вкладка, а право в форме заявки: поле «Сотрудник» с выбором из отделов, видных по роли
+        'onBehalf' => [
+            'name' => 'Подача заявок за сотрудников',
+            'levels' => [self::NONE, self::EDIT],
+            'labels' => [self::NONE => 'Нет', self::EDIT => 'Да'],
+            'hint' => 'Например, внести больничный за заболевшего сотрудника или зафиксировать его отгул. Сотрудник выбирается из отделов, которые видны по роли.',
+        ],
     ];
 
     /** Чьи заявки видны, кроме своих и тех, где сотрудник участвует, от узкого к широкому */
@@ -569,6 +576,7 @@ final class RoleService
         {
             $tabs['balances'] = self::EDIT;
             $tabs['dashboard'] = self::VIEW;
+            $tabs['onBehalf'] = self::EDIT;
         }
         if ($code === self::ROUTE_EDITOR)
         {

@@ -19,7 +19,7 @@ window.Kb24Dashboard = (function () {
     };
 
     var ctx = null;
-    var view = { year: new Date().getFullYear(), departmentId: 0, approverId: 0, group: '', data: null };
+    var view = { year: new Date().getFullYear(), departmentId: 0, approverId: 0, group: '', data: null, sickBy: 'employees', dayoffBy: 'employees', zero: '' };
 
     function root() { return document.getElementById('dashboard'); }
     function esc(text) { return ctx.esc(text); }
@@ -121,16 +121,18 @@ window.Kb24Dashboard = (function () {
             + '</div>'
             + (data.departments.length
                 ? '<div data-role="rest"></div><div data-role="load"></div>' + (data.speed ? '<div data-role="speed"></div>' : '')
+                  + '<div class="kb-dash-pair"><div data-role="sick"></div><div data-role="dayoff"></div></div>'
                 : '<p class="hint">Нет доступных отделов. Какие отделы видны, задают роли на вкладке «Доступ».</p>')
             + '<div class="kb-tip" data-role="tip" hidden></div>';
 
-        holder('prev').addEventListener('click', function () { view.year--; view.group = ''; show(); });
-        holder('next').addEventListener('click', function () { view.year++; view.group = ''; show(); });
+        holder('prev').addEventListener('click', function () { view.year--; view.group = ''; view.zero = ''; show(); });
+        holder('next').addEventListener('click', function () { view.year++; view.group = ''; view.zero = ''; show(); });
         var select = holder('department');
         if (select) {
             select.addEventListener('change', function () {
                 view.departmentId = +select.value;
                 view.group = '';
+                view.zero = '';
                 drawSections();
             });
             bindTooltip();
@@ -143,6 +145,8 @@ window.Kb24Dashboard = (function () {
         drawRest();
         drawLoad();
         if (view.data.speed) { drawSpeed(); }
+        drawAbsence('sick', 'Больничные', 'Без больничных');
+        drawAbsence('dayoff', 'Отгулы', 'Без отгулов');
         BX24.fitWindow();
     }
 
@@ -359,6 +363,81 @@ window.Kb24Dashboard = (function () {
         holder('speed').querySelectorAll('[data-request]').forEach(function (tr) {
             tr.addEventListener('click', function () { ctx.openCard(+tr.dataset.request); });
         });
+    }
+
+    // ---------- больничные и отгулы ----------
+
+    function drawAbsence(kind, title, zeroLabel) {
+        var by = view[kind + 'By'];
+        var people = employees();
+        var daysKey = kind + 'Days';
+        var casesKey = kind + 'Cases';
+        var content;
+
+        if (by === 'employees') {
+            var ranked = people.filter(function (e) { return e[daysKey] > 0; })
+                .sort(function (a, b) { return b[daysKey] - a[daysKey] || b[casesKey] - a[casesKey]; });
+            var zero = people.filter(function (e) { return !e[daysKey]; });
+            content = (ranked.length > 10 ? '<p class="kb-hint">Показаны 10 сотрудников, у кого больше всего дней.</p>' : '')
+                + (ranked.length
+                    ? hbars(ranked.slice(0, 10).map(function (e) {
+                        return { name: ctx.name(e.id), value: e[daysKey], label: e[daysKey] + ' дн.',
+                            tip: esc(ctx.name(e.id)) + '<br>' + e[daysKey] + ' дн., случаев: ' + e[casesKey] + '<br>' + esc(departmentName(e.departmentId)) };
+                    }))
+                    : '<p class="hint">Нет ни одного случая</p>')
+                + (zero.length ? '<button type="button" class="kb-link" data-role="zero">' + esc(zeroLabel) + ': ' + zero.length + ' сотр.</button>' : '')
+                + (view.zero === kind ? '<div class="kb-zero">' + zero.map(function (e) { return esc(ctx.name(e.id)); })
+                    .sort(function (a, b) { return a.localeCompare(b); }).join(', ') + '</div>' : '');
+        } else {
+            var stats = departments().map(function (d) {
+                var members = people.filter(function (e) { return e.departmentId === d.id; });
+                var days = members.reduce(function (sum, e) { return sum + e[daysKey]; }, 0);
+                var cases = members.reduce(function (sum, e) { return sum + e[casesKey]; }, 0);
+                return { name: d.name, days: days, cases: cases, perHead: d.headcount ? days / d.headcount : 0, headcount: d.headcount };
+            }).sort(function (a, b) { return b.perHead - a.perHead; });
+            var items = function (list) {
+                return list.map(function (st) {
+                    return { name: st.name, value: st.perHead, label: ctx.formatDays(Math.round(st.perHead * 10) / 10) + ' дн./чел.',
+                        tip: esc(st.name) + '<br>' + st.days + ' дн. на ' + st.headcount + ' чел., случаев: ' + st.cases };
+                });
+            };
+            var max = stats.length ? stats[0].perHead : 0;
+            content = '<p class="kb-hint">Дни на одного сотрудника, чтобы сравнивать отделы разного размера.</p>'
+                + (!stats.length ? '<p class="hint">Нет отделов</p>'
+                    : stats.length <= 10 ? hbars(items(stats), max)
+                    : '<h4 class="kb-dash-sub">Больше всего</h4>' + hbars(items(stats.slice(0, 5)), max)
+                      + '<h4 class="kb-dash-sub">Меньше всего</h4>' + hbars(items(stats.slice(-5)), max));
+        }
+
+        var toggle = '<div class="kb-segmented">' + [['employees', 'По сотрудникам'], ['departments', 'По отделам']].map(function (v) {
+            return '<button type="button" class="kb-seg' + (by === v[0] ? ' is-active' : '') + '" data-by="' + v[0] + '">' + v[1] + '</button>';
+        }).join('') + '</div>';
+
+        holder(kind).innerHTML = section(title + ' в ' + view.year + ' году', 'По утверждённым заявкам, дни внутри года.', toggle + '<div class="kb-dash-gap"></div>' + content);
+        holder(kind).querySelectorAll('[data-by]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                view[kind + 'By'] = button.dataset.by;
+                drawAbsence(kind, title, zeroLabel);
+                BX24.fitWindow();
+            });
+        });
+        var zeroButton = holder(kind).querySelector('[data-role="zero"]');
+        if (zeroButton) {
+            zeroButton.addEventListener('click', function () {
+                view.zero = view.zero === kind ? '' : kind;
+                drawAbsence(kind, title, zeroLabel);
+                BX24.fitWindow();
+            });
+        }
+    }
+
+    function hbars(items, max) {
+        max = max || Math.max.apply(null, items.map(function (i) { return i.value; }).concat([1]));
+        return '<div class="kb-hbars">' + items.map(function (i) {
+            return '<div class="kb-hbar" data-tip="' + esc(i.tip) + '"><span class="kb-hbar-name">' + esc(i.name) + '</span>'
+                + '<span class="kb-hbar-track"><span class="kb-hbar-fill" style="width:' + (i.value ? Math.max(2, Math.round(i.value / max * 100)) : 0) + '%"></span></span>'
+                + '<span class="kb-hbar-value">' + esc(i.label) + '</span></div>';
+        }).join('') + '</div>';
     }
 
     function summarize(values) {

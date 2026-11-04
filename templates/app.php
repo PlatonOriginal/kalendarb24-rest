@@ -33,6 +33,7 @@
 <section id="tab-requests" hidden>
     <form id="new-request" class="form">
         <h2>Новая заявка</h2>
+        <label id="for-user" hidden>Сотрудник <button type="button" data-role="for-user">Я сам</button></label>
         <label>Вид <select name="kind"></select></label>
         <label>С <input type="date" name="dateFrom" required></label>
         <label>по <input type="date" name="dateTo" required></label>

@@ -140,6 +140,9 @@ final class Notifier implements AfterResponse
             'rejected' => ($userId === $request['userId'] ? 'Ваша заявка отклонена' : 'Заявка, которую вы согласовали, отклонена')
                 . ($reason !== '' ? ' (' . $reason . ')' : '') . ': ' . ($userId === $request['userId'] ? '' : $author . ', ') . $what,
             'withdrawn' => 'Заявка отозвана автором: ' . $author . ', ' . $what,
+            // Заявку подали за сотрудника: например, больничный внёс отдел кадров
+            'filed' => ($names[$item['actorId']] ?? 'Коллега') . ' внёс за вас отсутствие: ' . $what
+                . ($request['status'] === Status::APPROVED ? ', оно уже утверждено' : ', оно на согласовании'),
             'cancel_review' => $author . ' просит отменить утверждённое отсутствие: ' . $what
                 . ($request['cancelReason'] !== '' ? '. Причина отмены: ' . $request['cancelReason'] : ''),
             'cancelled' => ($userId === $request['userId'] ? 'Ваше отсутствие отменено' : 'Отсутствие отменено: ' . $author) . ', ' . $what,
@@ -174,6 +177,10 @@ final class Notifier implements AfterResponse
             if (array_diff($item['to'], [$item['request']['userId']]) !== [])
             {
                 $ids[] = $item['request']['userId'];
+            }
+            if ($item['event'] === 'filed')
+            {
+                $ids[] = $item['actorId'];
             }
         }
         if ($ids === [])

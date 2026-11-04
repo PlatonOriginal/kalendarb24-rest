@@ -45,6 +45,7 @@ window.Kb24Access = (function () {
             + '<details class="acc-more"><summary>Как устроен доступ</summary><p class="hint">Роль открывает вкладки приложения и задаёт, заявки каких отделов видны в календаре, '
             + 'в карточках и на дашборде. Что можно сделать с заявкой, зависит от участия в ней: автор подаёт и отзывает, согласующий согласует или отклоняет, '
             + 'получатель результата подтверждает ознакомление. Роли указываются в шагах маршрутов на вкладке «Маршруты»; названия ролей и шагов не обязаны совпадать. '
+            + 'Право «Подача заявок за сотрудников» добавляет в форму заявки поле «Сотрудник»: например, так вносят больничный за заболевшего сотрудника или фиксируют его отгул. '
             + 'Роль, указанную в маршрутах, удалить нельзя. Изменения доступа к вкладкам сотрудники увидят, когда заново откроют приложение.</p></details>'
             + (data.canEdit ? '' : '<p class="hint">Вам доступен только просмотр ролей.</p>')
             + '<div data-role="list">' + view.roles.map(function (role, index) { return '<div class="acc-role" data-index="' + index + '"></div>'; }).join('') + '</div>'
@@ -102,8 +103,9 @@ window.Kb24Access = (function () {
                 }).join('') + '</select>' : (role.departmentIds.length || edit ? '' : '<span class="hint">нет</span>'))
                 + '</div></div></div>')
             + '<div class="acc-grid">' + Object.keys(data.tabs).map(function (tab) {
-                return '<label><span class="acc-label">' + esc(data.tabs[tab].name) + '</span>'
-                    + select('tab-' + tab, data.tabs[tab].levels.map(function (level) { return [level, LEVELS[level]]; }), role.tabs[tab], !edit) + '</label>';
+                var def = data.tabs[tab];
+                return '<label' + (def.hint ? ' title="' + esc(def.hint) + '"' : '') + '><span class="acc-label">' + esc(def.name) + (def.hint ? ' <span class="acc-q">?</span>' : '') + '</span>'
+                    + select('tab-' + tab, def.levels.map(function (level) { return [level, (def.labels || LEVELS)[level]]; }), role.tabs[tab], !edit) + '</label>';
             }).join('')
             + '<label><span class="acc-label">Чьи заявки и какой календарь видит</span>'
             + select('scope', Object.keys(data.scopes).map(function (code) { return [code, data.scopes[code]]; }), role.scope, !edit) + '</label>'

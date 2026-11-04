@@ -30,6 +30,7 @@ final class Schema
                 'properties' => [
                     'USER_ID' => ['name' => 'Сотрудник (ID)', 'type' => 'N'],
                     'DEPT_ID' => ['name' => 'Отдел (ID)', 'type' => 'N'],
+                    'FILED_BY' => ['name' => 'Кто подал за сотрудника (ID, 0 — сам)', 'type' => 'N'],
                     'KIND' => ['name' => 'Вид отпуска', 'type' => 'S'],
                     'DATE_FROM' => ['name' => 'Начало, Y-m-d', 'type' => 'S'],
                     'DATE_TO' => ['name' => 'Окончание, Y-m-d', 'type' => 'S'],
@@ -112,6 +113,7 @@ final class Schema
                     'IS_DEFAULT' => ['name' => 'Маршрут по умолчанию (Y/N)', 'type' => 'S'],
                     'ACTIVE' => ['name' => 'Включён (Y/N)', 'type' => 'S'],
                     'EXCLUSIVE' => ['name' => 'Единственный вариант для своих видов (Y/N)', 'type' => 'S'],
+                    'AUTO_APPROVE' => ['name' => 'Утверждать сразу, без шагов (Y/N)', 'type' => 'S'],
                     'KINDS' => ['name' => 'Виды отсутствия (коды через запятую, пусто — все)', 'type' => 'S'],
                     'DEPTS' => ['name' => 'Отделы (ID через запятую, пусто — все)', 'type' => 'S'],
                     'SORT' => ['name' => 'Сортировка', 'type' => 'N'],

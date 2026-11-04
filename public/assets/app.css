@@ -225,3 +225,11 @@ h3 { font-size: 14px; font-weight: 600; margin: 16px 0 4px; }
 .acc-grid select { width: 100%; }
 .acc-label { font-size: 12px; color: #828b95; }
 @media (max-width: 700px) { .acc-members { grid-template-columns: 1fr; } }
+.acc-q { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: #e6e9ec; color: #525c69; font-size: 10px; line-height: 14px; text-align: center; cursor: help; }
+.kb-dash-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 0 20px; }
+.kb-dash-gap { height: 12px; }
+.kb-segmented { display: inline-flex; border: 1px solid var(--kb-border); border-radius: 4px; overflow: hidden; }
+.kb-seg { padding: 6px 12px; border: 0; border-right: 1px solid var(--kb-border); border-radius: 0; background: #fff; cursor: pointer; font: inherit; }
+.kb-seg:last-child { border-right: 0; }
+.kb-seg.is-active { background: var(--kb-accent); color: #fff; }
+.kb-zero { margin-top: 6px; font-size: 13px; color: #525c69; }

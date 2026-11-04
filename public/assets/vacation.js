@@ -36,7 +36,7 @@
     var STEP_STATE = { done: 'согласовано', current: 'сейчас здесь', next: 'впереди', skipped: 'пропущен', rejected: 'отклонено' };
     var STEP_KIND = { head: 'руководитель по структуре', hr: 'роль «Отдел кадров»', director: 'роль «Директор»' };
 
-    var state = { me: null, names: {} };
+    var state = { me: null, names: {}, forUser: 0 };
 
     function el(id) {
         return document.getElementById(id);
@@ -173,9 +173,11 @@
     function renderBalanceHint() {
         var form = el('new-request');
         var hint = el('balance-hint');
-        var b = state.balance;
-        hint.hidden = form.kind.value !== 'vacation';
-        hint.innerHTML = !b ? 'Праздничные дни в ежегодный отпуск не входят.'
+        // Остаток известен только свой: за другого сотрудника его проверит сервер
+        var b = state.forUser ? null : state.balance;
+        hint.hidden = form.kind.value !== 'vacation' && form.kind.value !== 'sick';
+        hint.innerHTML = form.kind.value === 'sick' ? 'Больничный можно внести и задним числом; он может приходиться на отпуск.'
+            : !b ? 'Праздничные дни в ежегодный отпуск не входят.'
             : 'Доступно <b>' + esc(window.Kb24Balance.formatDays(b.available)) + ' дн.</b> ежегодного отпуска (остаток на '
               + esc(formatDate(b.asOf)) + ' за вычетом поданных заявок). Праздничные дни в отпуск не входят.';
     }
@@ -184,9 +186,11 @@
         api('/api/requests/mine').then(function (data) {
             state.balance = data.balance;
             renderBalanceHint();
-            return loadNames(data.items.map(function (r) { return r.approverId; })).then(function () {
+            return loadNames(data.items.map(function (r) { return r.approverId; }).concat(data.items.map(function (r) { return r.userId; }))).then(function () {
                 fillRows('my-requests', data.items, function (r) {
-                    return [esc(r.id), esc(period(r)), esc(state.me.kinds[r.kind] || r.kind), esc(r.days), status(r.status, r), esc(r.approverId ? name(r.approverId) : '')];
+                    // Поданные за других сотрудников: с их именем
+                    var kind = esc(state.me.kinds[r.kind] || r.kind) + (r.userId !== state.me.userId ? '<br><span class="hint">за ' + esc(name(r.userId)) + '</span>' : '');
+                    return [esc(r.id), esc(period(r)), kind, esc(r.days), status(r.status, r), esc(r.approverId ? name(r.approverId) : '')];
                 }, 'Заявок пока нет');
             });
         }).catch(showError);
@@ -448,6 +452,25 @@
             return '<option value="' + esc(code) + '">' + esc(state.me.kinds[code]) + '</option>';
         }).join('');
         form.kind.addEventListener('change', renderBalanceHint);
+        // Право «Подача заявок за сотрудников»: например, больничный за заболевшего или отгул по факту
+        var forUser = el('for-user');
+        var forButton = form.querySelector('[data-role="for-user"]');
+        forUser.hidden = state.me.access.onBehalf !== 'edit';
+        var drawForUser = function () {
+            forButton.textContent = state.forUser ? name(state.forUser) : 'Я сам';
+            renderBalanceHint();
+        };
+        forButton.addEventListener('click', function () {
+            var selected = state.forUser ? [{ id: state.forUser, name: name(state.forUser) }] : [];
+            window.Kb24Picker.open({ title: 'За кого подать заявку', multiple: false, selected: selected, anchor: form }).then(function (users) {
+                if (users) {
+                    users.forEach(function (user) { state.names[user.id] = user.name; });
+                    state.forUser = users.length && users[0].id !== state.me.userId ? users[0].id : 0;
+                }
+                drawForUser();
+                BX24.fitWindow();
+            });
+        });
         form.dateFrom.addEventListener('change', function () {
             if (!form.dateTo.value || form.dateTo.value < form.dateFrom.value) {
                 form.dateTo.value = form.dateFrom.value;
@@ -455,14 +478,21 @@
         });
         form.addEventListener('submit', function (event) {
             event.preventDefault();
-            var button = form.querySelector('button');
+            var button = form.querySelector('button[type="submit"]');
             button.disabled = true;
-            api('/api/requests', { kind: form.kind.value, dateFrom: form.dateFrom.value, dateTo: form.dateTo.value })
+            api('/api/requests', { kind: form.kind.value, dateFrom: form.dateFrom.value, dateTo: form.dateTo.value, userId: state.forUser || 0 })
                 .then(function (request) {
+                    var who = request.userId !== state.me.userId ? ' за ' + name(request.userId) : '';
                     form.reset();
+                    state.forUser = 0;
+                    drawForUser();
                     loadMine();
+                    if (request.status === 'approved') {
+                        showMessage('Отсутствие внесено' + who + ' и сразу утверждено, дней: ' + request.days + '.');
+                        return null;
+                    }
                     return loadNames([request.approverId]).then(function () {
-                        showMessage('Заявка подана, дней: ' + request.days + '. Решение принимает ' + name(request.approverId) + '.');
+                        showMessage('Заявка подана' + who + ', дней: ' + request.days + '. Решение принимает ' + name(request.approverId) + '.');
                     });
                 })
                 .catch(showError)

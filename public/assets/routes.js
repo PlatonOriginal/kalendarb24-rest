@@ -127,6 +127,7 @@ window.Kb24Routes = (function () {
             + '<div class="route-head"><b>' + esc(route.name) + '</b>'
             + (route.active ? '' : ' <span class="chip">выключен</span>')
             + (route.exclusive ? ' <span class="chip accent">единственный для своих видов</span>' : '')
+            + (route.autoApprove ? ' <span class="chip accent">утверждается сразу</span>' : '')
             + (view.data.canEdit ? ' <button type="button" data-route="' + index + '" data-purpose="' + purpose + '">Изменить</button>' : '') + '</div>'
             + '<div class="hint">' + (route.isDefault ? 'Когда не подошёл ни один другой маршрут'
                 : 'Виды: ' + esc(kinds.length ? kinds.join(', ') : 'все') + ' · Отделы: ' + esc(departments.length ? departments.join(', ') + ' (с подотделами)' : 'все'))
@@ -173,6 +174,8 @@ window.Kb24Routes = (function () {
             + '<div class="form route-form">'
             + '<label>Название <input name="name" maxlength="100" size="40" value="' + esc(route.name) + '" placeholder="' + (cancel ? 'Например, «Отзыв отпусков производства»' : 'Например, «Отпуска производства»') + '"></label>'
             + (route.isDefault ? '' : '<label class="check"><input type="checkbox" name="active"' + (route.active ? ' checked' : '') + '> маршрут включён</label>')
+            + (route.isDefault || cancel ? '' : '<label class="check" title="Например, для больничного: его вносят по факту"><input type="checkbox" name="autoApprove"'
+                + (route.autoApprove ? ' checked' : '') + '> утверждать сразу, без согласования (шаги ниже не действуют)</label>')
             + '</div>'
             + (route.isDefault ? '<p class="hint">Действует на все виды отсутствия и отделы, когда не подошёл ни один другой маршрут. Выключить или удалить его нельзя.</p>' : '<div class="route-cols">'
             + '<div><h3>Виды отсутствия</h3><p class="hint">Ничего не выбрано — все виды.</p>'
@@ -376,6 +379,8 @@ window.Kb24Routes = (function () {
             if (!route.isDefault) {
                 payload.active = form.querySelector('[name="active"]').checked;
                 payload.exclusive = form.querySelector('[name="exclusive"]').checked;
+                var auto = form.querySelector('[name="autoApprove"]');
+                payload.autoApprove = auto ? auto.checked : false;
                 payload.kinds = Array.prototype.map.call(form.querySelectorAll('[name="kind"]:checked'), function (input) { return input.value; });
                 payload.departmentIds = Array.prototype.map.call(form.querySelector('[name="departments"]').selectedOptions, function (option) { return Number(option.value); });
             }

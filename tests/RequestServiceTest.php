@@ -850,4 +850,16 @@ final class RequestServiceTest extends TestCase
         // Excel пересохраняет даты с двузначным годом
         self::assertSame(['2026-10-01', 10.0], [$this->balances->get($this->portal, self::ACCOUNTANT)['asOf'], $this->balances->get($this->portal, self::ACCOUNTANT)['days']]);
     }
+
+    public function testMissingAbsenceTypesAreAddedToChartKeepingExistingOnes(): void
+    {
+        self::assertSame(['Отгул'], $this->absence->ensureTypes($this->portal), 'больничный на портале уже есть, «отгул за свой счет» — не отгул');
+        $update = $this->http->fieldUpdates[0];
+        self::assertSame(['PROPERTY_7', 'L', 'Отгул'], [$update['FIELD_ID'], $update['FIELDS']['TYPE'], $update['FIELDS']['LIST_TEXT_VALUES']]);
+        self::assertSame('отгул за свой счет', $update['FIELDS']['LIST']['9']['VALUE']);
+        self::assertCount(8, $update['FIELDS']['LIST']);
+
+        $this->http->chartFields['PROPERTY_7']['DISPLAY_VALUES_FORM']['17'] = 'Отгул';
+        self::assertSame([], $this->absence->ensureTypes($this->portal), 'второй раз не добавляем');
+    }
 }
