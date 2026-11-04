@@ -175,17 +175,78 @@ final class AbsenceCalendar implements AfterResponse
     }
 
     /**
+     * При установке и обновлении: добавить в поле «Тип отсутствия» графика значения для видов приложения, которых там нет
+     * (на портале по умолчанию нет «Отгула»). Существующие значения передаются обратно как были (LIST), новые — в LIST_TEXT_VALUES:
+     * по документации LIST_TEXT_VALUES дописывается к имеющимся, а о том, удаляет ли LIST непереданные значения, не сказано.
+     * https://apidocs.bitrix24.com/api-reference/lists/fields/lists-field-update.html
+     *
+     * @return list<string> добавленные значения
+     */
+    public function ensureTypes(Portal $portal): array
+    {
+        try
+        {
+            foreach ((array)$this->rest->call($portal, 'lists.field.get', self::CHART) as $id => $field)
+            {
+                if (($field['CODE'] ?? '') !== 'ABSENCE_TYPE')
+                {
+                    continue;
+                }
+                $values = (array)($field['DISPLAY_VALUES_FORM'] ?? []);
+                $missing = [];
+                foreach (Kinds::all() as $code => $kind)
+                {
+                    if ($kind['chartName'] !== '' && self::chartType($values, $code, false) === null)
+                    {
+                        $missing[] = $kind['chartName'];
+                    }
+                }
+                if ($missing === [])
+                {
+                    return [];
+                }
+                $list = [];
+                $sort = 10;
+                foreach ($values as $valueId => $value)
+                {
+                    $list[(string)$valueId] = ['VALUE' => (string)$value, 'SORT' => $sort];
+                    $sort += 10;
+                }
+                $fields = ['NAME' => (string)($field['NAME'] ?? 'Тип отсутствия'), 'TYPE' => 'L', 'LIST' => $list, 'LIST_TEXT_VALUES' => implode("\n", $missing)];
+                foreach (['IS_REQUIRED', 'MULTIPLE', 'SORT', 'SETTINGS', 'DEFAULT_VALUE'] as $key)
+                {
+                    if (isset($field[$key]) && $field[$key] !== '')
+                    {
+                        $fields[$key] = $field[$key];
+                    }
+                }
+                $this->rest->call($portal, 'lists.field.update', self::CHART + ['FIELD_ID' => (string)$id, 'FIELDS' => $fields]);
+
+                return $missing;
+            }
+        }
+        catch (RestException $e)
+        {
+            // Установка продолжается: такие отсутствия попадут в график как «Другое»
+            error_log('kb24 absence types: ' . $e->errorCode . ' ' . $e->getMessage());
+        }
+
+        return [];
+    }
+
+    /**
      * @param array<string|int, string> $values ID значения => название
      */
-    private static function chartType(array $values, string $kind): ?string
+    private static function chartType(array $values, string $kind, bool $other = true): ?string
     {
-        foreach ([Kinds::all()[$kind]['chart'] ?? [], ['друг']] as $keywords)
+        foreach ($other ? [Kinds::all()[$kind]['chart'] ?? [], ['друг']] : [Kinds::all()[$kind]['chart'] ?? []] as $keywords)
         {
             foreach ($values as $id => $name)
             {
                 foreach ($keywords as $keyword)
                 {
-                    if (str_contains(mb_strtolower((string)$name), $keyword))
+                    $name = mb_strtolower(trim((string)$name));
+                    if (str_starts_with($keyword, '=') ? $name === mb_substr($keyword, 1) : str_contains($name, $keyword))
                     {
                         return (string)$id;
                     }

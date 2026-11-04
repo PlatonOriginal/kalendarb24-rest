@@ -13,6 +13,7 @@ use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\AbsenceCalendar;
 use Kb24Rest\Vacation\BalanceService;
 use Kb24Rest\Vacation\CalendarService;
 use Kb24Rest\Vacation\DashboardService;
@@ -88,6 +89,7 @@ final class App
         private readonly ?BalanceService $balances = null,
         private readonly ?RouteService $routes = null,
         private readonly ?DashboardService $dashboard = null,
+        private readonly ?AbsenceCalendar $absence = null,
     ) {
     }
 
@@ -173,6 +175,7 @@ final class App
                     (string)($post['kind'] ?? ''),
                     (string)($post['dateFrom'] ?? ''),
                     (string)($post['dateTo'] ?? ''),
+                    (int)($post['userId'] ?? 0),
                 )),
                 (bool)preg_match('~^/api/requests/(\d+)$~', $path, $m) => $this->json($this->requests->card($this->currentUser($server), (int)$m[1])),
                 (bool)preg_match('~^/api/requests/(\d+)/(approve|reject|withdraw|cancel|cancel-approve|cancel-refuse|calendar-retry|acknowledge)$~', $path, $m) && $this->isPost($server)
@@ -455,6 +458,7 @@ final class App
         if ($force || $this->portals->storageVersion($portal->memberId) !== self::setupVersion($this->appUrl))
         {
             $this->storage->ensure($portal);
+            $this->absence?->ensureTypes($portal);
             $this->bindAppUri($portal);
             $this->portals->setStorageVersion($portal->memberId, self::setupVersion($this->appUrl));
         }

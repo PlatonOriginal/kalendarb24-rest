@@ -46,6 +46,8 @@ final class FakePortal implements HttpTransport
     /** @var list<int> */
     public array $deletedChartEntries = [];
     public ?array $chartError = null;
+    /** @var list<array<string, mixed>> вызовы lists.field.update */
+    public array $fieldUpdates = [];
 
     /** @var array<int, list<array<string, mixed>>> календари сотрудников (calendar.section.get) по ID владельца */
     public array $sections = [];
@@ -121,6 +123,7 @@ final class FakePortal implements HttpTransport
             )))]],
             'lists.field.get' => $this->chartError ?? ['result' => $this->chartFields],
             'lists.element.add' => $this->chartError ?? ['result' => 3000 + array_push($this->chartEntries, $params)],
+            'lists.field.update' => ['result' => (bool)array_push($this->fieldUpdates, $params)],
             'lists.element.delete' => ['result' => (bool)array_push($this->deletedChartEntries, (int)$params['ELEMENT_ID'])],
             'calendar.settings.get' => ['result' => $this->calendarSettings],
             'tasks.task.add' => $this->taskError ?? ['result' => ['task' => ['id' => (string)(5000 + array_push($this->tasks, (array)$params['fields']))]]],

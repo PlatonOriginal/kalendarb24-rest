@@ -56,6 +56,8 @@ final class RouteServiceTest extends TestCase
             [1 => [1], 30 => [14], 31 => [14], 40 => [14], 41 => [14], 50 => [1], 100 => [5]],
         );
         $this->portal = new Portal(1, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1);
+        // Демо-маршрут «Больничный» проверяется отдельно, остальным тестам он только сдвигает номера маршрутов
+        $this->http->options = ['kind_routes_ready' => 1];
         $this->rebuild();
         $this->roles->set($this->portal, RoleService::DIRECTOR, [self::DIRECTOR]);
         $this->roles->set($this->portal, RoleService::HR, [40, 41]);
@@ -644,5 +646,45 @@ final class RouteServiceTest extends TestCase
         self::assertNull($this->dashboard->build($this->user(40), 2026)['speed']);
         $this->expectExceptionMessage('Нет доступа к вкладке «Дашборд»');
         $this->dashboard->build($this->user(self::SALES_MANAGER), 2026);
+    }
+
+    public function testSickLeaveFiledByHrIsApprovedAtOnceAndMayOverlapVacation(): void
+    {
+        $this->http->options['kind_routes_ready'] = 0;
+        $this->rebuild();
+        $sick = array_values(array_filter($this->routes->all($this->portal), static fn(array $r) => $r['name'] === 'Больничный'))[0];
+        self::assertSame([true, true, ['sick']], [$sick['autoApprove'], $sick['exclusive'], $sick['kinds']]);
+
+        $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        $this->rebuild();
+        // Отдел кадров вносит больничный задним числом, он приходится и на отпуск
+        $request = $this->service->create($this->user(40), 'sick', '2026-10-20', '2026-11-10', self::ACCOUNTANT);
+        self::assertSame([Status::APPROVED, self::ACCOUNTANT, 40, 22], [$request['status'], $request['userId'], $request['filedBy'], $request['days']]);
+        $filed = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'filed'));
+        self::assertSame([[self::ACCOUNTANT]], array_column($filed, 'to'));
+        self::assertContains($request['id'], array_column($this->service->mine($this->user(40)), 'id'), 'поданная за другого видна в «Моих заявках»');
+
+        $data = $this->dashboard->build($this->user(self::DIRECTOR), 2026);
+        $employee = array_values(array_filter($data['employees'], static fn(array $e) => $e['id'] === self::ACCOUNTANT))[0];
+        self::assertSame([22, 1, 0], [$employee['sickDays'], $employee['sickCases'], $employee['dayoffDays']]);
+    }
+
+    public function testOnlyRoleWithRightFilesForOthersAndDayoffIsApproved(): void
+    {
+        try
+        {
+            $this->service->create($this->user(self::ACCOUNTING_HEAD), 'dayoff', '2026-11-20', '2026-11-20', self::ACCOUNTANT);
+            self::fail('Подал за другого без права');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringContainsString('Подача заявок за сотрудников', $e->getMessage());
+        }
+        $request = $this->service->create($this->user(40), 'dayoff', '2026-11-20', '2026-11-20', self::ACCOUNTANT);
+        self::assertSame([Status::ROUTE_REVIEW, self::ACCOUNTING_HEAD], [$request['status'], $request['approverId']]);
+        $this->rebuild();
+        self::assertTrue($this->service->card($this->user(40), $request['id'])['can']['withdraw'], 'подавший может отозвать');
+        $this->expectExceptionMessage('прошедшие даты');
+        $this->service->create($this->user(self::ACCOUNTANT), 'dayoff', '2026-10-20', '2026-10-20');
     }
 }

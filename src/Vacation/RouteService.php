@@ -133,6 +133,11 @@ final class RouteService
             $this->createCancelRoutes($portal, $items);
             $items = $this->storage->find($portal, Schema::ROUTES);
         }
+        if ($this->settings !== null && !$this->settings->kindRoutesReady($portal))
+        {
+            $this->createSickRoute($portal);
+            $items = $this->storage->find($portal, Schema::ROUTES);
+        }
         $byPurpose = [self::PURPOSE_APPROVE => [], self::PURPOSE_CANCEL => []];
         foreach ($items as $item)
         {
@@ -221,6 +226,21 @@ final class RouteService
         $this->settings?->setCancelRoutesReady($portal);
     }
 
+    /**
+     * Один раз на портал: демо-маршрут для больничного — закреплён за видом и утверждается сразу.
+     * Чтобы больничный согласовывали, достаточно снять «Утверждать сразу»: шаг руководителя уже есть.
+     */
+    private function createSickRoute(Portal $portal): void
+    {
+        $this->storage->add($portal, Schema::ROUTES, 'route', self::toValues([
+            'purpose' => self::PURPOSE_APPROVE, 'isDefault' => false, 'name' => 'Больничный', 'active' => true, 'exclusive' => true,
+            'autoApprove' => true, 'kinds' => ['sick'], 'departmentIds' => [],
+            'steps' => [['id' => 1, 'name' => 'Руководитель', 'kind' => self::KIND_HEAD, 'userId' => 0, 'roleId' => 0, 'submitDays' => 0, 'rejectDays' => 0, 'active' => true]],
+            'watchers' => [],
+        ], 0));
+        $this->settings?->setKindRoutesReady($portal);
+    }
+
     private static function toValues(array $route, int $userId): array
     {
         return [
@@ -229,6 +249,7 @@ final class RouteService
             'IS_DEFAULT' => $route['isDefault'] ? 'Y' : 'N',
             'ACTIVE' => $route['active'] ? 'Y' : 'N',
             'EXCLUSIVE' => $route['exclusive'] ? 'Y' : 'N',
+            'AUTO_APPROVE' => !empty($route['autoApprove']) ? 'Y' : 'N',
             'KINDS' => implode(',', $route['kinds']),
             'DEPTS' => implode(',', $route['departmentIds']),
             'SORT' => 100,
@@ -252,7 +273,7 @@ final class RouteService
         $steps[0]['submitDays'] = $this->settings?->minSubmitDays($portal) ?? 0;
 
         return $this->upgrade($portal, [
-            'id' => 0, 'purpose' => self::PURPOSE_APPROVE, 'isDefault' => true, 'name' => 'По умолчанию', 'active' => true, 'exclusive' => false, 'kinds' => [], 'departmentIds' => [],
+            'id' => 0, 'purpose' => self::PURPOSE_APPROVE, 'isDefault' => true, 'name' => 'По умолчанию', 'active' => true, 'exclusive' => false, 'autoApprove' => false, 'kinds' => [], 'departmentIds' => [],
             'sort' => 0, 'steps' => $steps, 'watchers' => [], 'updatedBy' => 0, 'updatedAt' => '',
         ]);
     }
@@ -343,6 +364,8 @@ final class RouteService
             // «По умолчанию» действует всегда, на все виды и отделы
             'active' => $isDefault || self::flag($data['active'] ?? true),
             'exclusive' => !$isDefault && self::flag($data['exclusive'] ?? false),
+            // Утверждать сразу: шаги сохраняются, но не действуют, пока флажок не снят
+            'autoApprove' => !$isDefault && !$cancel && self::flag($data['autoApprove'] ?? false),
             'kinds' => $isDefault ? [] : array_values(array_intersect(array_keys(Kinds::all()), array_map('strval', (array)($data['kinds'] ?? [])))),
             'departmentIds' => $isDefault ? [] : self::ids($data['departmentIds'] ?? []),
         ];
@@ -464,9 +487,13 @@ final class RouteService
     {
         $routes = $this->all($portal);
         $route = RoutePlan::pick(array_slice($routes, 1), $kind, $this->departmentChain($portal, $departmentId)) ?? $routes[0];
+        if ($route['autoApprove'])
+        {
+            return ['id' => $route['id'], 'name' => $route['name'], 'steps' => [], 'watchers' => $route['watchers'], 'autoApprove' => true];
+        }
         $steps = array_values(array_filter($route['steps'], static fn(array $step) => $step['active']));
 
-        return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers']] : null;
+        return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers'], 'autoApprove' => false] : null;
     }
 
     /**
@@ -631,6 +658,7 @@ final class RouteService
             'name' => (string)($values['ROUTE_NAME'] ?? ''),
             'active' => ($values['ACTIVE'] ?? '') === 'Y',
             'exclusive' => ($values['EXCLUSIVE'] ?? '') === 'Y',
+            'autoApprove' => ($values['AUTO_APPROVE'] ?? '') === 'Y',
             'kinds' => array_values(array_filter(explode(',', (string)($values['KINDS'] ?? '')))),
             'departmentIds' => self::ids(explode(',', (string)($values['DEPTS'] ?? ''))),
             'sort' => (int)($values['SORT'] ?? 100),

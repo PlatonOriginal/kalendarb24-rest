@@ -15,7 +15,7 @@ use Kb24Rest\Structure\StructureService;
  * Дашборд за год, как в коробке: кто отдыхал, нагрузка по месяцам, скорость согласования.
  * Доступ — вкладки «Дашборд» и «Дашборд: скорость согласования» в ролях; отделы — по видимости ролей
  * (свой отдел, с подотделами, вся компания; руководитель — свои отделы с подотделами).
- * Больничных и прогулов в REST-приложении пока нет, поэтому этих разделов нет.
+ * Больничные и отгулы — по утверждённым заявкам: дни внутри года и число случаев. Прогулов в REST-приложении пока нет.
  * Сервер отдаёт только ID сотрудников: ФИО браузер берёт из портала сам.
  */
 final class DashboardService
@@ -65,6 +65,8 @@ final class DashboardService
         $vacations = [];
         $vacationDays = [];
         $absences = [];
+        // Больничные и отгулы: [userId][kind] => [days, cases]
+        $stats = [];
         foreach ($all as $request)
         {
             if (!isset($users[$request['userId']]) || !Status::isActive($request['status']) || $request['dateFrom'] === '')
@@ -77,6 +79,11 @@ final class DashboardService
                 continue;
             }
             $absences[] = ['department' => $users[$request['userId']], 'user' => $request['userId'], 'range' => $range];
+            if (in_array($request['kind'], ['sick', 'dayoff'], true) && in_array($request['status'], [Status::APPROVED, Status::CANCELLING], true))
+            {
+                $stats[$request['userId']][$request['kind']]['cases'] = ($stats[$request['userId']][$request['kind']]['cases'] ?? 0) + 1;
+                $stats[$request['userId']][$request['kind']]['days'] = ($stats[$request['userId']][$request['kind']]['days'] ?? 0) + $range->overlapDays($yearRange);
+            }
             if (Kinds::all()[$request['kind']]['deductsBalance'] ?? false)
             {
                 $approved = in_array($request['status'], [Status::APPROVED, Status::CANCELLING], true);
@@ -97,6 +104,10 @@ final class DashboardService
                 'longPart' => Analytics::hasLongPart($own),
                 'vacationDays' => $vacationDays[$userId] ?? 0,
                 'available' => $available[$userId] ?? null,
+                'sickDays' => $stats[$userId]['sick']['days'] ?? 0,
+                'sickCases' => $stats[$userId]['sick']['cases'] ?? 0,
+                'dayoffDays' => $stats[$userId]['dayoff']['days'] ?? 0,
+                'dayoffCases' => $stats[$userId]['dayoff']['cases'] ?? 0,
             ];
         }
         $headcount = array_filter(array_column($departments, 'headcount', 'id'));

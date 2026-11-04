@@ -27,10 +27,12 @@ final class Settings
         'min_submit_exempt_unpaid' => 0,
         // Маршруты отзыва уже заведены: демо-маршрут создан, получатели «отменено» перенесены из маршрутов согласования
         'cancel_routes_ready' => 0,
+        // Создан демо-маршрут «Больничный» (утверждается сразу)
+        'kind_routes_ready' => 0,
     ];
 
     /** Настройки «да или нет»: хранятся как 0 и 1 */
-    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid', 'cancel_routes_ready'];
+    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid', 'cancel_routes_ready', 'kind_routes_ready'];
 
     /** @var array<string, array<string, int>> */
     private array $cache = [];
@@ -138,6 +140,17 @@ final class Settings
     public function setCancelRoutesReady(Portal $portal): void
     {
         $this->rest->call($portal, 'app.option.set', ['options' => ['cancel_routes_ready' => 1]]);
+        unset($this->cache[$portal->memberId]);
+    }
+
+    public function kindRoutesReady(Portal $portal): bool
+    {
+        return $this->all($portal)['kind_routes_ready'] === 1;
+    }
+
+    public function setKindRoutesReady(Portal $portal): void
+    {
+        $this->rest->call($portal, 'app.option.set', ['options' => ['kind_routes_ready' => 1]]);
         unset($this->cache[$portal->memberId]);
     }
 }

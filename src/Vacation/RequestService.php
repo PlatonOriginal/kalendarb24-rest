@@ -46,23 +46,41 @@ final class RequestService
     ) {
     }
 
-    public function create(CurrentUser $user, string $kind, string $dateFrom, string $dateTo): array
+    /**
+     * @param int $forUserId за кого подаётся заявка: 0 или свой ID — за себя; иначе нужно право «Подача заявок за сотрудников»
+     */
+    public function create(CurrentUser $user, string $kind, string $dateFrom, string $dateTo, int $forUserId = 0): array
     {
         $portal = $user->portal;
         if (!Kinds::exists($kind))
         {
             throw new VacationError('Не выбран вид отсутствия');
         }
+        $type = Kinds::all()[$kind];
         $range = $this->parseRange($dateFrom, $dateTo);
-        if ($range->from < $this->today)
+        // Больничный вносят и задним числом
+        if ($range->from < $this->today && !$type['backdated'])
         {
             throw new VacationError('Нельзя подать заявку на прошедшие даты');
         }
 
-        $departmentId = $this->structure->departmentsOf($portal, $user->userId)[0] ?? null;
+        $authorId = $forUserId > 0 ? $forUserId : $user->userId;
+        $filedBy = $authorId !== $user->userId ? $user->userId : 0;
+        $departmentId = $this->structure->departmentsOf($portal, $authorId)[0] ?? null;
         if ($departmentId === null)
         {
             throw new VacationError('Сотрудник не привязан к отделу в структуре компании');
+        }
+        if ($filedBy > 0)
+        {
+            if (!$this->roles->can($user, 'onBehalf', RoleService::EDIT))
+            {
+                throw new VacationError('Подавать заявки за других сотрудников может роль с правом «Подача заявок за сотрудников» на вкладке «Доступ»');
+            }
+            if (!$this->seesDepartment($user, $departmentId))
+            {
+                throw new VacationError('Этот сотрудник не в тех отделах, которые вам видны по роли');
+            }
         }
         // Без сервиса маршрутов (старые тесты) — прежняя цепочка по умолчанию со статусами head_review и т. д.
         $plan = $this->routes?->findFor($portal, $departmentId, $kind);
@@ -71,21 +89,23 @@ final class RequestService
             throw new VacationError('У подходящего маршрута выключены все шаги: проверьте вкладку «Маршруты»');
         }
         $minDays = $plan !== null ? RoutePlan::minSubmitDays($plan['steps']) : ($this->settings?->minSubmitDays($portal) ?? 0);
-        $exempt = !Kinds::all()[$kind]['paid'] && ($this->settings?->minSubmitExemptUnpaid($portal) ?? false);
+        $exempt = $type['backdated'] || (!$type['paid'] && ($this->settings?->minSubmitExemptUnpaid($portal) ?? false));
         if (!$exempt && $range->from < $this->today->modify("+{$minDays} days"))
         {
             throw new VacationError(($plan !== null ? 'По маршруту «' . $plan['name'] . '» з' : 'З') . "аявку нужно подать не позже чем за {$minDays} дн. до начала");
         }
-        foreach ($this->findRequests($portal, ['PROPERTY_USER_ID' => $user->userId]) as $existing)
+        foreach ($this->findRequests($portal, ['PROPERTY_USER_ID' => $authorId]) as $existing)
         {
-            if (Status::isActive($existing['status']) && $range->overlapDays($this->parseRange($existing['dateFrom'], $existing['dateTo'])) > 0)
+            // Больничный может прийтись на отпуск и другие отсутствия
+            if (!$type['overlaps'] && !(Kinds::all()[$existing['kind']]['overlaps'] ?? false)
+                && Status::isActive($existing['status']) && $range->overlapDays($this->parseRange($existing['dateFrom'], $existing['dateTo'])) > 0)
             {
-                throw new VacationError('На эти даты у вас уже есть заявка');
+                throw new VacationError($filedBy ? 'На эти даты у сотрудника уже есть заявка' : 'На эти даты у вас уже есть заявка');
             }
         }
         if ($this->limits !== null && Kinds::all()[$kind]['countsInLimit'])
         {
-            $violations = $this->limits->check($portal, $departmentId, $user->userId, $range);
+            $violations = $this->limits->check($portal, $departmentId, $authorId, $range);
             if ($violations !== [])
             {
                 throw new VacationError(implode('. ', array_map(fn(LimitViolation $v) => $this->describeViolation($portal, $v), $violations)));
@@ -99,7 +119,7 @@ final class RequestService
         if ($this->balances !== null && Kinds::all()[$kind]['deductsBalance'])
         {
             // Годовщины приёма до начала отпуска уже добавят дни к остатку
-            $balance = $this->balances->get($portal, $user->userId, $range->from);
+            $balance = $this->balances->get($portal, $authorId, $range->from);
             if ($balance !== null && $days > $balance['available'] + 1e-9)
             {
                 throw new VacationError(sprintf(
@@ -115,14 +135,19 @@ final class RequestService
         }
 
         $values = [
-            'USER_ID' => $user->userId,
+            'USER_ID' => $authorId,
+            'FILED_BY' => $filedBy,
             'DEPT_ID' => $departmentId,
             'KIND' => $kind,
             'DATE_FROM' => $range->from->format('Y-m-d'),
             'DATE_TO' => $range->to->format('Y-m-d'),
             'DAYS' => $days,
         ];
-        $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $user->userId, $departmentId, $this->allowSelfApproval ? [] : [$user->userId]) : null;
+        if ($plan !== null && $plan['autoApprove'])
+        {
+            return $this->createApproved($user, $kind, $values, $plan);
+        }
+        $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $authorId, $departmentId, $this->allowSelfApproval ? [] : [$authorId]) : null;
         if ($plan !== null && $step === null)
         {
             // Например, директор подаёт заявку, а в маршруте согласует только директор
@@ -144,13 +169,42 @@ final class RequestService
         }
         else
         {
-            $status = $this->route($portal, $user->userId, $departmentId)->getFirstStatus();
-            $approverId = $this->pickApprover($portal, $status, $user->userId, $departmentId);
+            $status = $this->route($portal, $authorId, $departmentId)->getFirstStatus();
+            $approverId = $this->pickApprover($portal, $status, $authorId, $departmentId);
             $id = $this->storage->add($portal, Schema::REQUESTS, $kind, $values + ['STATUS' => $status, 'APPROVER_ID' => $approverId]);
             $this->log($portal, $id, $user->userId, 'create', null, $status);
         }
         $request = $this->load($portal, $id);
         $this->notifier?->add($portal, 'review', $request, [$approverId], $user->userId);
+        if ($filedBy)
+        {
+            $this->notifier?->add($portal, 'filed', $request, [$authorId], $user->userId);
+        }
+
+        return $request;
+    }
+
+    /**
+     * Маршрут «Утверждать сразу» (по умолчанию у больничного): заявка утверждается при подаче, получатели маршрута уведомляются.
+     */
+    private function createApproved(CurrentUser $user, string $kind, array $values, array $plan): array
+    {
+        $portal = $user->portal;
+        $id = $this->storage->add($portal, Schema::REQUESTS, $kind, $values + [
+            'STATUS' => Status::APPROVED,
+            'APPROVER_ID' => 0,
+            'ROUTE_ID' => $plan['id'],
+            'ROUTE_DATA' => json_encode(['id' => $plan['id'], 'name' => $plan['name'], 'steps' => []], JSON_UNESCAPED_UNICODE),
+            'WATCHERS' => json_encode($plan['watchers'] ?? [], JSON_UNESCAPED_UNICODE),
+        ]);
+        $this->log($portal, $id, $user->userId, 'create', null, Status::APPROVED);
+        $request = $this->load($portal, $id);
+        $this->absence?->add($portal, $request);
+        if ($values['FILED_BY'])
+        {
+            $this->notifier?->add($portal, 'filed', $request, [$request['userId']], $user->userId);
+        }
+        $this->notifyWatchers($portal, $request, 'approved');
 
         return $request;
     }
@@ -223,9 +277,9 @@ final class RequestService
     {
         $portal = $user->portal;
         $request = $this->load($portal, $id);
-        if ($request['userId'] !== $user->userId)
+        if ($request['userId'] !== $user->userId && $request['filedBy'] !== $user->userId)
         {
-            throw new VacationError('Отозвать заявку может только её автор');
+            throw new VacationError('Отозвать заявку может только её автор или тот, кто подал её за сотрудника');
         }
         if (!ApprovalRoute::canWithdraw($request['status']))
         {
@@ -575,7 +629,7 @@ final class RequestService
             'can' => [
                 'approve' => $decides,
                 'reject' => $decides && $rejectBlocked === null,
-                'withdraw' => $review && $request['userId'] === $user->userId,
+                'withdraw' => $review && ($request['userId'] === $user->userId || $request['filedBy'] === $user->userId),
                 'cancel' => $ownApproved && $cancelHint === null,
                 'decideCancel' => $cancelling,
                 // Ещё и заявки, утверждённые до записи в график: у них есть событие, но нет записи
@@ -645,7 +699,13 @@ final class RequestService
      */
     public function mine(CurrentUser $user): array
     {
-        return $this->findRequests($user->portal, ['PROPERTY_USER_ID' => $user->userId]);
+        // И поданные за других: их можно отозвать, пока не согласованы
+        $own = $this->findRequests($user->portal, ['PROPERTY_USER_ID' => $user->userId]);
+        $filed = $this->findRequests($user->portal, ['PROPERTY_FILED_BY' => $user->userId]);
+        $all = array_column($own, null, 'id') + array_column($filed, null, 'id');
+        krsort($all);
+
+        return array_values($all);
     }
 
     /**
@@ -857,6 +917,7 @@ final class RequestService
         return [
             'id' => (int)$item['ID'],
             'userId' => (int)($values['USER_ID'] ?? 0),
+            'filedBy' => (int)($values['FILED_BY'] ?? 0),
             'deptId' => (int)($values['DEPT_ID'] ?? 0),
             'kind' => (string)($values['KIND'] ?? ''),
             'dateFrom' => (string)($values['DATE_FROM'] ?? ''),
