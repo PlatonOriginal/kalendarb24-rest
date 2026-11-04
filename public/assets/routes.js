@@ -1,5 +1,5 @@
 /**
- * Вкладка «Маршруты», как в коробке: список маршрутов, редактор шагов и кто ещё настраивает маршруты.
+ * Вкладка «Маршруты», как в коробке: список маршрутов и редактор шагов. Кто видит и меняет маршруты, задают роли на вкладке «Доступ».
  * Сервер хранит только ID сотрудников: ФИО запрашивает браузер.
  */
 window.Kb24Routes = (function () {
@@ -8,8 +8,7 @@ window.Kb24Routes = (function () {
     var MAX_STEPS = 10;
     var KINDS = [
         ['head', 'Руководитель по структуре'],
-        ['hr', 'Отдел кадров (по очереди)'],
-        ['director', 'Директор из настроек'],
+        ['role', 'Роль с вкладки «Доступ»'],
         ['user', 'Конкретный сотрудник']
     ];
 
@@ -32,16 +31,24 @@ window.Kb24Routes = (function () {
         return view.data.departments.filter(function (d) { return ids.indexOf(d.id) !== -1; }).map(function (d) { return d.name; });
     }
 
+    function roleName(id) {
+        var role = view.data.roles.filter(function (r) { return r.id === id; })[0];
+        return role ? role.name : '';
+    }
+
     function who(step) {
         if (step.kind === 'user') {
             return step.userId ? ctx.name(step.userId) : 'сотрудник не выбран';
+        }
+        if (step.kind === 'role') {
+            return roleName(step.roleId) ? 'роль «' + roleName(step.roleId) + '»' : 'роль не выбрана';
         }
         var kind = KINDS.filter(function (k) { return k[0] === step.kind; })[0];
         return kind ? kind[1] : '';
     }
 
     function userIds() {
-        var ids = view.data.editorIds.slice();
+        var ids = [];
         view.data.routes.forEach(function (route) {
             ids.push(route.updatedBy);
             route.steps.forEach(function (step) { ids.push(step.userId); });
@@ -63,29 +70,31 @@ window.Kb24Routes = (function () {
 
     function draw() {
         var data = view.data;
-        root().innerHTML = '<p><button type="button" class="primary" data-role="add">+ Новый маршрут</button></p>'
+        root().innerHTML = (data.canEdit ? '<p><button type="button" class="primary" data-role="add">+ Новый маршрут</button></p>'
+                : '<p class="hint">Вам доступен только просмотр маршрутов.</p>')
             + '<p class="hint">Маршрут задаёт шаги согласования для видов отсутствия и отделов. Из подходящих маршрутов срабатывает самый точный: '
             + 'закреплённый за видом как единственный вариант, затем маршрут отдела сотрудника (ближайшего вверх по структуре) с этим видом, отдела без вида, '
             + 'вида без отдела и общий. Если не подошёл ни один, работает маршрут «По умолчанию». '
             + 'Шаг пропускается, если согласующий на нём — автор заявки или тот, кто уже согласовал её на одном из прошлых шагов. '
-            + 'Если на шаге согласующего нет (например, у отдела нет руководителя), заявка уходит в отдел кадров. '
+            + 'Если на шаге согласующего нет (например, у отдела нет руководителя или роль пуста), заявка уходит участнику роли «' + esc(data.fallbackRole) + '». '
+            + 'На шаге роли заявка достаётся участнику роли, у которого меньше заявок на проверке. '
             + 'Выключенный шаг пропускается и в уже поданных заявках, если они до него ещё не дошли. '
             + 'Поданные заявки идут по маршруту, каким он был при подаче. '
             + 'Получатели из «Уведомить о результате» не согласуют, а узнают об утверждении или отмене и подтверждают ознакомление; '
             + 'пока не подтвердят, каждый рабочий день до начала отсутствия им приходит напоминание.</p>'
-            + '<div class="routes">' + data.routes.map(card).join('') + '</div>'
-            + editorsBlock();
+            + '<div class="routes">' + data.routes.map(card).join('') + '</div>';
 
-        root().querySelector('[data-role="add"]').addEventListener('click', function () {
-            openEditor({ id: 0, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], steps: [newStep('Руководитель отдела', 'head')], watchers: [] });
-        });
+        if (data.canEdit) {
+            root().querySelector('[data-role="add"]').addEventListener('click', function () {
+                openEditor({ id: 0, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], steps: [newStep('Руководитель отдела', 'head')], watchers: [] });
+            });
+        }
         // По номеру в списке: у маршрута «По умолчанию», пока его не сохраняли, ID нет
         root().querySelectorAll('[data-route]').forEach(function (button) {
             button.addEventListener('click', function () {
                 openEditor(JSON.parse(JSON.stringify(data.routes[Number(button.dataset.route)])));
             });
         });
-        bindEditors();
         BX24.fitWindow();
     }
 
@@ -103,7 +112,7 @@ window.Kb24Routes = (function () {
             + '<div class="route-head"><b>' + esc(route.name) + '</b>'
             + (route.active ? '' : ' <span class="chip">выключен</span>')
             + (route.exclusive ? ' <span class="chip accent">единственный для своих видов</span>' : '')
-            + ' <button type="button" data-route="' + index + '">Изменить</button></div>'
+            + (view.data.canEdit ? ' <button type="button" data-route="' + index + '">Изменить</button>' : '') + '</div>'
             + '<div class="hint">' + (route.isDefault ? 'Когда не подошёл ни один другой маршрут'
                 : 'Виды: ' + esc(kinds.length ? kinds.join(', ') : 'все') + ' · Отделы: ' + esc(departments.length ? departments.join(', ') + ' (с подотделами)' : 'все'))
             + ' · Подача не позже чем за ' + esc(minDays) + ' дн.</div>'
@@ -118,31 +127,6 @@ window.Kb24Routes = (function () {
             + '</div>';
     }
 
-    function editorsBlock() {
-        var ids = view.data.editorIds;
-        return '<h2>Кто настраивает маршруты</h2>'
-            + '<p class="hint">Администратор портала может всегда. Здесь добавьте сотрудников, которым тоже можно менять маршруты.</p>'
-            + '<p>' + (ids.length ? ids.map(function (id) { return '<span class="chip">' + esc(ctx.name(id)) + '</span>'; }).join(' ')
-                : '<span class="hint">пока только администратор</span>')
-            + ' <button type="button" data-role="editors">Выбрать</button></p>';
-    }
-
-    function bindEditors() {
-        var button = root().querySelector('[data-role="editors"]');
-        button.addEventListener('click', function () {
-            pick('Кто настраивает маршруты', true, view.data.editorIds, button.parentNode).then(function (users) {
-                if (!users) {
-                    return;
-                }
-                ctx.api('/api/routes/editors', { ids: users.map(function (u) { return u.id; }).join(',') }).then(function (saved) {
-                    view.data.editorIds = saved.editorIds;
-                    draw();
-                    ctx.showMessage('Список сохранён');
-                }).catch(ctx.showError);
-            });
-        });
-    }
-
     function pick(title, multiple, ids, anchor) {
         var selected = ids.filter(Boolean).map(function (id) { return { id: id, name: ctx.name(id) }; });
         return window.Kb24Picker.open({ title: title, multiple: multiple, selected: selected, anchor: anchor }).then(function (users) {
@@ -152,7 +136,18 @@ window.Kb24Routes = (function () {
     }
 
     function newStep(name, kind) {
-        return { id: 0, name: name || '', kind: kind || 'head', userId: 0, submitDays: 0, rejectDays: 0, active: true };
+        return { id: 0, name: name || '', kind: kind || 'head', userId: 0, roleId: 0, submitDays: 0, rejectDays: 0, active: true };
+    }
+
+    function roleSelect(fieldName, roleId) {
+        return '<br><select name="' + fieldName + '"><option value="0">— выберите роль —</option>' + view.data.roles.map(function (r) {
+            return '<option value="' + esc(r.id) + '"' + (r.id === roleId ? ' selected' : '') + '>' + esc(r.name) + '</option>';
+        }).join('') + '</select>';
+    }
+
+    function readRole(tr, fieldName) {
+        var select = tr.querySelector('[name="' + fieldName + '"]');
+        return select ? Number(select.value) || 0 : 0;
     }
 
     function openEditor(route) {
@@ -176,7 +171,7 @@ window.Kb24Routes = (function () {
             }).join('') + '</select></div>'
             + '</div>')
             + '<h3>Шаги <span class="hint">(от 1 до ' + MAX_STEPS + ')</span></h3>'
-            + '<table class="route-table"><thead><tr><th>№</th><th>Роль</th><th>Кто согласует</th>'
+            + '<table class="route-table"><thead><tr><th>№</th><th>Шаг</th><th>Кто согласует</th>'
             + '<th title="Заявку подают не позже чем за столько дней до начала">Подача за, дн.</th>'
             + '<th title="Отклонить на этом шаге можно не позже чем за столько дней до начала">Отклонить до, дн.</th>'
             + '<th>Включён</th><th></th></tr></thead><tbody data-role="steps"></tbody></table>'
@@ -206,6 +201,7 @@ window.Kb24Routes = (function () {
                 return {
                     kind: kind,
                     userId: kind === 'user' ? route.watchers[index].userId : 0,
+                    roleId: kind === 'role' ? readRole(tr, 'watchRole') : 0,
                     events: Array.prototype.map.call(tr.querySelectorAll('[name="watchEvent"]:checked'), function (input) { return input.value; }),
                     task: tr.querySelector('[name="watchTask"]').value,
                     taskDays: Number(tr.querySelector('[name="taskDays"]').value) || 0
@@ -219,6 +215,7 @@ window.Kb24Routes = (function () {
                         return '<option value="' + k[0] + '"' + (w.kind === k[0] ? ' selected' : '') + '>' + esc(k[1]) + '</option>';
                     }).join('') + '</select>'
                     + (w.kind === 'user' ? '<br><button type="button" data-pick>' + esc(w.userId ? ctx.name(w.userId) : 'Выбрать сотрудника') + '</button>' : '')
+                    + (w.kind === 'role' ? roleSelect('watchRole', w.roleId) + '<br><span class="hint">уведомляются все участники роли</span>' : '')
                     + '</td><td>' + EVENTS.map(function (e) {
                         return '<label class="check"><input type="checkbox" name="watchEvent" value="' + e[0] + '"' + (w.events.indexOf(e[0]) !== -1 ? ' checked' : '') + '> ' + esc(e[1]) + '</label>';
                     }).join('<br>') + '</td>'
@@ -262,7 +259,7 @@ window.Kb24Routes = (function () {
 
         root().querySelector('[data-role="add-watcher"]').addEventListener('click', function () {
             readWatchers();
-            route.watchers.push({ kind: 'hr', userId: 0, events: ['approved', 'cancelled'], task: 'none', taskDays: 3 });
+            route.watchers.push({ kind: 'role', userId: 0, roleId: 0, events: ['approved', 'cancelled'], task: 'none', taskDays: 3 });
             drawWatchers();
         });
 
@@ -274,6 +271,7 @@ window.Kb24Routes = (function () {
                     name: tr.querySelector('[name="stepName"]').value,
                     kind: kind,
                     userId: kind === 'user' ? route.steps[index].userId : 0,
+                    roleId: kind === 'role' ? readRole(tr, 'stepRole') : 0,
                     submitDays: Number(tr.querySelector('[name="submitDays"]').value) || 0,
                     rejectDays: Number(tr.querySelector('[name="rejectDays"]').value) || 0,
                     active: tr.querySelector('[name="stepActive"]').checked
@@ -284,11 +282,12 @@ window.Kb24Routes = (function () {
         function drawSteps() {
             tbody.innerHTML = route.steps.map(function (step, index) {
                 return '<tr' + (step.active ? '' : ' class="is-off"') + '><td>' + (index + 1) + '</td>'
-                    + '<td><input name="stepName" maxlength="100" value="' + esc(step.name) + '" placeholder="Например, HR"></td>'
+                    + '<td><input name="stepName" maxlength="100" value="' + esc(step.name) + '" placeholder="Например, Кадры"></td>'
                     + '<td><select name="who">' + KINDS.map(function (k) {
                         return '<option value="' + k[0] + '"' + (step.kind === k[0] ? ' selected' : '') + '>' + esc(k[1]) + '</option>';
                     }).join('') + '</select>'
                     + (step.kind === 'user' ? '<br><button type="button" data-pick>' + esc(step.userId ? ctx.name(step.userId) : 'Выбрать сотрудника') + '</button>' : '')
+                    + (step.kind === 'role' ? roleSelect('stepRole', step.roleId) : '')
                     + '</td>'
                     + '<td><input type="number" min="0" max="365" name="submitDays" value="' + esc(step.submitDays) + '"></td>'
                     + '<td><input type="number" min="0" max="365" name="rejectDays" value="' + esc(step.rejectDays) + '"></td>'

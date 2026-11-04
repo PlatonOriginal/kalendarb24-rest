@@ -69,11 +69,11 @@ final class RequestServiceTest extends TestCase
     {
         $rest = new RestClient($this->http, new OAuthClient($this->http, 'id', 'secret'), new MemoryPortalStore());
         $storage = new EntityStorage($rest);
-        $this->roles = new RoleService($storage);
-        $this->notifier = new Notifier($rest, 'local.app.code');
-        $this->absence = new AbsenceCalendar($rest, $storage);
         $structure = new StructureService($rest);
         $settings = new Settings($rest);
+        $this->roles = new RoleService($storage, $structure, $settings);
+        $this->notifier = new Notifier($rest, 'local.app.code');
+        $this->absence = new AbsenceCalendar($rest, $storage);
         $this->limits = new LimitService($storage, $structure);
         $this->calendar = new CalendarService($structure, $this->roles, $this->limits, $settings);
         $this->balances = new BalanceService($storage, $this->roles, $settings, new \DateTimeImmutable('2026-10-27'));
@@ -247,7 +247,7 @@ final class RequestServiceTest extends TestCase
         }
         catch (VacationError $e)
         {
-            self::assertStringContainsString('директор', $e->getMessage());
+            self::assertStringContainsString('В роли «Директор»', $e->getMessage());
         }
         self::assertSame([], $this->http->items[Schema::REQUESTS] ?? []);
     }
@@ -264,7 +264,7 @@ final class RequestServiceTest extends TestCase
         }
         catch (VacationError $e)
         {
-            self::assertStringContainsString('отдел кадров', $e->getMessage());
+            self::assertStringContainsString('состав ролей', $e->getMessage());
         }
     }
 
@@ -273,7 +273,7 @@ final class RequestServiceTest extends TestCase
         $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
         $rest = new RestClient($this->http, new OAuthClient($this->http, 'id', 'secret'), new MemoryPortalStore());
         $storage = new EntityStorage($rest);
-        $service = new RequestService($storage, new StructureService($rest), new RoleService($storage), new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), true);
+        $service = new RequestService($storage, new StructureService($rest), new RoleService($storage, new StructureService($rest)), new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), true);
 
         $request = $service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
 
@@ -350,7 +350,7 @@ final class RequestServiceTest extends TestCase
         $rest = new RestClient($this->http, new OAuthClient($this->http, 'id', 'secret'), new MemoryPortalStore());
         $storage = new EntityStorage($rest);
         $notifier = new Notifier($rest, 'code', true);
-        $service = new RequestService($storage, new StructureService($rest), new RoleService($storage), new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), true, $notifier);
+        $service = new RequestService($storage, new StructureService($rest), new RoleService($storage, new StructureService($rest)), new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), true, $notifier);
 
         $service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-11', '2026-11-19');
         self::assertSame([self::DIRECTOR], $notifier->pending()[0]['to']);
@@ -733,9 +733,11 @@ final class RequestServiceTest extends TestCase
         $this->calendar->get($this->user(self::SALES_MANAGER), 14, '2026-11-01', '2026-11-30');
     }
 
-    public function testOptionLetsEmployeesSeeAllDepartmentsInTreeOrder(): void
+    public function testBaseRoleScopeLetsEmployeesSeeAllDepartmentsInTreeOrder(): void
     {
-        $this->http->options = ['employees_see_other_departments' => '1'];
+        $base = $this->roles->all($this->portal)[0];
+        $this->roles->save($this->user(1, true), ['scope' => 'all'] + $base);
+        $this->rebuild();
 
         $tree = $this->calendar->departments($this->user(self::SALES_MANAGER));
 

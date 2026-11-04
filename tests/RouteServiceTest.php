@@ -66,7 +66,7 @@ final class RouteServiceTest extends TestCase
         $storage = new EntityStorage($rest);
         $structure = new StructureService($rest);
         $settings = new Settings($rest);
-        $this->roles = new RoleService($storage);
+        $this->roles = new RoleService($storage, $structure, $settings);
         $this->notifier = new Notifier($rest, 'local.app.code');
         $this->routes = new RouteService($storage, $this->roles, $structure, $settings);
         $this->watch = new WatchService($storage, $rest, $this->notifier, new \DateTimeImmutable($this->today));
@@ -326,22 +326,39 @@ final class RouteServiceTest extends TestCase
         self::assertSame(Status::APPROVED, $request['status']);
     }
 
-    public function testOnlyAdminAndEditorsChangeRoutes(): void
+    public function testRoutesTabFollowsAccessRoles(): void
     {
         try
         {
             $this->routes->list($this->user(self::LAWYER));
-            self::fail('Маршруты увидел не тот, кто их настраивает');
+            self::fail('Маршруты увидел тот, кому вкладка не открыта');
         }
         catch (VacationError)
         {
         }
-        $this->routes->saveEditors($this->admin(), [self::LAWYER]);
+        $tabs = ['calendar' => 'view', 'balances' => 'none', 'routes' => 'view', 'settings' => 'none', 'access' => 'none'];
+        $role = $this->roles->save($this->admin(), ['name' => 'Юристы', 'userIds' => [self::LAWYER], 'tabs' => $tabs, 'scope' => 'dept']);
         $this->rebuild();
 
-        self::assertSame([self::LAWYER], $this->routes->list($this->user(self::LAWYER))['editorIds']);
-        $this->expectExceptionMessage('Себя из списка может убрать только администратор портала');
-        $this->routes->saveEditors($this->user(self::LAWYER), []);
+        $list = $this->routes->list($this->user(self::LAWYER));
+        self::assertFalse($list['canEdit']);
+        self::assertContains('Юристы', array_column($list['roles'], 'name'));
+        try
+        {
+            $this->routes->save($this->user(self::LAWYER), ['name' => 'Юр', 'steps' => [$this->step('Руководитель', 'head')]]);
+            self::fail('Сохранил маршрут с правом только смотреть');
+        }
+        catch (VacationError)
+        {
+        }
+
+        $this->roles->save($this->admin(), ['id' => $role['id'], 'name' => 'Юристы', 'userIds' => [self::LAWYER], 'tabs' => ['routes' => 'edit'] + $tabs, 'scope' => 'dept']);
+        $this->rebuild();
+        self::assertTrue($this->routes->list($this->user(self::LAWYER))['canEdit']);
+        $this->expectExceptionMessage('указана в маршрутах');
+        $this->saveRoute(['steps' => [['name' => 'Юрист', 'kind' => 'role', 'roleId' => $role['id']]]]);
+        $this->rebuild();
+        $this->roles->delete($this->admin(), $role['id'], $this->routes->usingRole($this->portal, $role['id']));
     }
 
     public function testRouteIsValidated(): void
@@ -400,8 +417,9 @@ final class RouteServiceTest extends TestCase
         self::assertSame(Status::APPROVED, $request['status']);
 
         $watch = array_values(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'watch'));
-        self::assertSame([[self::LAWYER], [40]], array_column($watch, 'to'));
-        self::assertSame(['approved', 'approved'], array_column($watch, 'reason'));
+        // Из роли уведомляются все её участники
+        self::assertSame([[self::LAWYER], [40], [41]], array_column($watch, 'to'));
+        self::assertSame(['approved', 'approved', 'approved'], array_column($watch, 'reason'));
 
         self::assertSame([], $this->http->tasks, 'задачу ставим после ответа браузеру');
         $this->watch->run();
@@ -412,7 +430,7 @@ final class RouteServiceTest extends TestCase
 
         $card = $this->service->card($this->user(self::LAWYER), $request['id']);
         self::assertSame(5001, $card['myAck']['taskId']);
-        self::assertSame([self::LAWYER, 40], array_column($card['acks'], 'userId'));
+        self::assertSame([self::LAWYER, 40, 41], array_column($card['acks'], 'userId'));
     }
 
     public function testAcknowledgeWithOptionalTask(): void
@@ -477,7 +495,7 @@ final class RouteServiceTest extends TestCase
             return array_column(array_filter($this->notifier->pending(), static fn(array $n) => $n['event'] === 'remind'), 'to');
         };
         self::assertSame([], $remind('2026-10-27'), 'в день уведомления не напоминаем');
-        self::assertSame([[40]], $remind('2026-10-28'));
+        self::assertSame([[40], [41]], $remind('2026-10-28'));
         self::assertSame([], $remind('2026-10-28'), 'повторный запуск в тот же день');
         self::assertSame([], $remind('2026-10-31', false), 'выходной');
         self::assertSame([], $remind('2026-11-09'), 'отсутствие уже началось');

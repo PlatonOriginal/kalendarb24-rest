@@ -36,11 +36,11 @@ $rest = new RestClient($http, $oauth, $portals);
 
 $structure = new StructureService($rest);
 $storage = new EntityStorage($rest);
-$roles = new RoleService($storage);
+$settings = new Settings($rest);
+$roles = new RoleService($storage, $structure, $settings);
 // При проверке под одним аккаунтом уведомления приходят и тому, кто сделал действие
 $notifier = new Notifier($rest, $config->appCode, $config->allowSelfApproval);
 $absence = new AbsenceCalendar($rest, $storage);
-$settings = new Settings($rest);
 $limits = new LimitService($storage, $structure);
 $balances = new BalanceService($storage, $roles, $settings);
 $routes = new RouteService($storage, $roles, $structure, $settings);

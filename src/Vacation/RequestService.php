@@ -441,7 +441,7 @@ final class RequestService
         $found = $id > 0 ? $this->storage->findMany($portal, [
             'request' => [Schema::REQUESTS, ['ID' => $id]],
             'history' => [Schema::HISTORY, ['PROPERTY_REQ_ID' => $id]],
-            'roles' => [Schema::ROLES, []],
+            'roles' => [Schema::ACCESS, []],
             ...($this->watch !== null ? ['acks' => [Schema::ACKS, ['PROPERTY_REQ_ID' => $id]]] : []),
         ]) : ['request' => []];
         if ($found['request'] === [])
@@ -457,14 +457,9 @@ final class RequestService
         }
         unset($entry);
         $this->roles->remember($portal, $found['roles']);
-        $roles = $this->roles->roles($portal);
         $acks = $this->watch?->records($found['acks'] ?? []) ?? [];
         $participants = array_merge([$request['userId'], $request['approverId']], array_column($history, 'actorId'), array_column($acks, 'userId'));
-        $visible = in_array($user->userId, $participants, true)
-            || $user->userId === $roles['director']
-            || in_array($user->userId, $roles['hr'], true)
-            || $user->isAdmin;
-        if (!$visible)
+        if (!in_array($user->userId, $participants, true) && !$this->seesDepartment($user, $request['deptId']))
         {
             throw new VacationError('Заявка не найдена');
         }
@@ -498,6 +493,20 @@ final class RequestService
             'myAck' => array_values(array_filter($acks, static fn(array $a) => $a['userId'] === $user->userId && $a['ackAt'] === ''))[0] ?? null,
             'route' => $plan !== null ? $this->exportRoute($portal, $request, $plan, $history) : null,
         ];
+    }
+
+    /**
+     * Чужую заявку, в которой сотрудник не участвует, видно по ролям вкладки «Доступ»: свой отдел, с подотделами или все.
+     */
+    private function seesDepartment(CurrentUser $user, int $departmentId): bool
+    {
+        if ($user->isAdmin)
+        {
+            return true;
+        }
+        $visible = $this->roles->visibleDepartments($user);
+
+        return $visible === null || in_array($departmentId, $visible, true);
     }
 
     public function acknowledge(CurrentUser $user, int $id, bool $task, string $deadline): array
@@ -572,7 +581,7 @@ final class RequestService
         $directorId = $this->roles->roles($portal)['director'];
         if ($directorId === null)
         {
-            throw new VacationError('В настройках приложения не указан директор');
+            throw new VacationError('В роли «' . ($this->roles->byLegacy($portal, RoleService::DIRECTOR)['name'] ?? 'Директор') . '» на вкладке «Доступ» никого нет');
         }
         $headId = $this->structure->orgChart($portal)->nearestHead($userId, $departmentId) ?? $directorId;
 
@@ -591,12 +600,12 @@ final class RequestService
         };
         if (!$approverId)
         {
-            throw new VacationError('Не найден согласующий: проверьте структуру компании и роли в настройках');
+            throw new VacationError('Не найден согласующий: проверьте структуру компании и состав ролей на вкладке «Доступ»');
         }
         if ($approverId === $userId && !$this->allowSelfApproval)
         {
-            // Например, директор подаёт заявку, а в ОК назначен только он сам
-            throw new VacationError('Заявку некому согласовать, кроме вас самих: назначьте в отдел кадров другого сотрудника');
+            // Например, директор подаёт заявку, а в роли «Отдел кадров» только он сам
+            throw new VacationError('Заявку некому согласовать, кроме вас самих: проверьте состав ролей на вкладке «Доступ»');
         }
 
         return $approverId;
@@ -610,17 +619,17 @@ final class RequestService
     {
         $roles = $this->roles->roles($portal);
 
-        return $this->leastLoadedHr($portal, array_values(array_diff($roles['hr'], [$userId])))
+        return $this->leastLoaded($portal, array_values(array_diff($roles['hr'], [$userId])))
             ?? $this->structure->orgChart($portal)->nearestHead($userId, $departmentId)
             ?? $roles['director'];
     }
 
     /**
-     * Сотрудник ОК, у которого меньше всего заявок на проверке (так по умолчанию работает и коробка).
+     * Участник роли, у которого меньше всего заявок на проверке (так по умолчанию работает и коробка).
      *
      * @param list<int> $hr
      */
-    private function leastLoadedHr(Portal $portal, array $hr): ?int
+    private function leastLoaded(Portal $portal, array $hr): ?int
     {
         if ($hr === [])
         {
@@ -845,11 +854,11 @@ final class RequestService
         $approverId = $next['approverId'] ?? $this->hrApprover($portal, $userId, $departmentId);
         if (!$approverId)
         {
-            throw new VacationError('Не найден согласующий: проверьте структуру компании и роли в настройках');
+            throw new VacationError('Не найден согласующий: проверьте структуру компании и состав ролей на вкладке «Доступ»');
         }
         if ($approverId === $userId && !$this->allowSelfApproval)
         {
-            throw new VacationError('Заявку некому согласовать, кроме вас самих: назначьте в отдел кадров другого сотрудника');
+            throw new VacationError('Заявку некому согласовать, кроме вас самих: проверьте состав ролей на вкладке «Доступ»');
         }
 
         return ['index' => $next['index'], 'approverId' => $approverId, 'rerouted' => $next['approverId'] === null];
@@ -871,22 +880,43 @@ final class RequestService
             {
                 continue;
             }
-            $userId = $this->stepApprover($portal, $watcher, $request['userId'], $request['deptId']);
-            if ($userId !== null && $userId !== $request['userId'] && !isset($recipients[$userId]))
+            // Из роли уведомляем всех её участников: каждый сам подтверждает ознакомление
+            $userIds = ($watcher['kind'] ?? '') === RouteService::KIND_ROLE
+                ? $this->roleMembers($portal, (int)($watcher['roleId'] ?? 0))
+                : [$this->stepApprover($portal, $watcher, $request['userId'], $request['deptId'])];
+            foreach ($userIds as $userId)
             {
-                $recipients[$userId] = ['userId' => $userId, 'task' => (string)($watcher['task'] ?? 'none'), 'taskDays' => (int)($watcher['taskDays'] ?? 0)];
+                if ($userId !== null && $userId !== $request['userId'] && !isset($recipients[$userId]))
+                {
+                    $recipients[$userId] = ['userId' => $userId, 'task' => (string)($watcher['task'] ?? 'none'), 'taskDays' => (int)($watcher['taskDays'] ?? 0)];
+                }
             }
         }
         $this->watch->start($portal, $request, $event, array_values($recipients));
     }
 
     /**
-     * @param list<int> $skip кто уже согласовал: за отдел кадров засчитывается согласование любого сотрудника ОК
+     * @param list<int> $skip кто уже согласовал: за шаг роли засчитывается согласование любого её участника
      */
     private function stepApprover(Portal $portal, array $step, int $userId, int $departmentId, array $skip = []): ?int
     {
-        $hrDone = array_values(array_diff(array_intersect($skip, $this->roles->roles($portal)['hr']), [$userId]));
-        $approverId = match ($step['kind'] ?? '')
+        $kind = (string)($step['kind'] ?? '');
+        if ($kind === RouteService::KIND_ROLE)
+        {
+            $all = $this->roleMembers($portal, (int)($step['roleId'] ?? 0));
+            $members = array_values(array_diff($all, [$userId]));
+            $done = array_values(array_intersect($skip, $members));
+            if ($done === [] && $members === [] && in_array($userId, $all, true))
+            {
+                // В роли только сам автор: шаг засчитывается, как и шаг, где согласующий — автор
+                return $userId;
+            }
+
+            return $done[0] ?? $this->leastLoaded($portal, $members);
+        }
+        // Шаги «Отдел кадров» и «Директор» остались в снимках заявок, поданных до шага «Роль»
+        $hrDone = $kind === RouteService::KIND_HR ? array_values(array_diff(array_intersect($skip, $this->roles->roles($portal)['hr']), [$userId])) : [];
+        $approverId = match ($kind)
         {
             RouteService::KIND_HEAD => $this->structure->orgChart($portal)->nearestHead($userId, $departmentId),
             RouteService::KIND_HR => $hrDone[0] ?? $this->hrApprover($portal, $userId, $departmentId),
@@ -895,6 +925,16 @@ final class RequestService
         };
 
         return $approverId ?: null;
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function roleMembers(Portal $portal, int $roleId): array
+    {
+        $role = $this->roles->byId($portal, $roleId);
+
+        return $role !== null && !$role['base'] ? $this->roles->members($portal, $role) : [];
     }
 
     /**
@@ -963,6 +1003,7 @@ final class RequestService
                 'name' => (string)($step['name'] ?? ''),
                 'kind' => (string)($step['kind'] ?? ''),
                 'userId' => (int)($step['userId'] ?? 0),
+                'roleName' => ($step['kind'] ?? '') === RouteService::KIND_ROLE ? (string)($this->roles->byId($portal, (int)($step['roleId'] ?? 0))['name'] ?? 'удалена') : '',
                 'state' => $state,
                 'actorId' => $decided['actorId'] ?? ($state === 'current' ? $request['approverId'] : 0),
                 'rejectUntil' => $rejectDays > 0 ? (new \DateTimeImmutable($request['dateFrom']))->modify("-{$rejectDays} days")->format('Y-m-d') : '',

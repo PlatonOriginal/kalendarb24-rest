@@ -17,6 +17,7 @@ final class Schema
     public const BALANCES = 'kbbal';
     public const ROUTES = 'kbroute';
     public const ACKS = 'kback';
+    public const ACCESS = 'kbaccess';
 
     /**
      * @return array<string, array{name: string, properties: array<string, array{name: string, type: string}>}>
@@ -60,10 +61,21 @@ final class Schema
                 ],
             ],
             self::ROLES => [
-                'name' => 'Отпуска: роли',
+                'name' => 'Отпуска: роли до вкладки «Доступ» (перенесены в kbaccess)',
                 'properties' => [
                     'ROLE' => ['name' => 'Роль', 'type' => 'S'],
                     'USER_ID' => ['name' => 'Сотрудник (ID)', 'type' => 'N'],
+                ],
+            ],
+            self::ACCESS => [
+                'name' => 'Отпуска: роли и доступ',
+                'properties' => [
+                    'ROLE_NAME' => ['name' => 'Название', 'type' => 'S'],
+                    'LEGACY' => ['name' => 'Перенесена из прежних настроек (base, director, hr, route_editor)', 'type' => 'S'],
+                    'USERS' => ['name' => 'Сотрудники (ID через запятую)', 'type' => 'S'],
+                    'DEPTS' => ['name' => 'Отделы с подотделами (ID через запятую)', 'type' => 'S'],
+                    'TABS' => ['name' => 'Доступ к вкладкам (JSON)', 'type' => 'S'],
+                    'SCOPE' => ['name' => 'Чьи заявки видны (dept, sub, all)', 'type' => 'S'],
                 ],
             ],
             self::LIMITS => [

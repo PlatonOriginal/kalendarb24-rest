@@ -12,7 +12,7 @@ use Kb24Rest\Structure\StructureService;
 
 /**
  * Настраиваемые маршруты согласования, как в коробке. Если ни один маршрут не подходит, работает маршрут
- * «По умолчанию» (руководитель → отдел кадров → директор). Он настраивается так же, как остальные, только
+ * «По умолчанию» (демо: руководитель → роль «Отдел кадров» → роль «Директор»). Он настраивается так же, как остальные, только
  * действует на все виды и отделы, его нельзя выключить или удалить. Пока его не сохраняли, он не хранится в портале.
  * У маршрута есть список «Уведомить о результате»: кому сообщить об утверждении или отмене отсутствия,
  * с подтверждением ознакомления и, если нужно, задачей.
@@ -23,9 +23,12 @@ final class RouteService
 {
     public const KIND_HEAD = 'head';
     public const KIND_USER = 'user';
+    /** Любой из участников роли вкладки «Доступ» */
+    public const KIND_ROLE = 'role';
+    /** Прежние шаги «Отдел кадров» и «Директор»: остаются только в снимках поданных заявок, при чтении маршрута становятся шагом «Роль» */
     public const KIND_HR = 'hr';
     public const KIND_DIRECTOR = 'director';
-    public const KINDS = [self::KIND_HEAD, self::KIND_USER, self::KIND_HR, self::KIND_DIRECTOR];
+    public const KINDS = [self::KIND_HEAD, self::KIND_USER, self::KIND_ROLE];
     /** О чём уведомлять: отсутствие утверждено, утверждённое отсутствие отменено */
     public const EVENTS = ['approved', 'cancelled'];
     /** Задача получателю уведомления: не ставить, ставить сразу, спросить при ознакомлении */
@@ -44,11 +47,16 @@ final class RouteService
     }
 
     /**
-     * Маршруты настраивают администратор и сотрудники из списка на вкладке «Маршруты».
+     * Маршруты настраивают администратор и роли с правом изменять вкладку «Маршруты».
      */
     public function canEdit(CurrentUser $user): bool
     {
-        return $user->isAdmin || in_array($user->userId, $this->roles->roles($user->portal)['routeEditors'], true);
+        return $this->roles->can($user, 'routes', RoleService::EDIT);
+    }
+
+    public function canView(CurrentUser $user): bool
+    {
+        return $this->roles->can($user, 'routes', RoleService::VIEW);
     }
 
     /**
@@ -56,7 +64,10 @@ final class RouteService
      */
     public function list(CurrentUser $user): array
     {
-        $this->assertEditor($user);
+        if (!$this->canView($user))
+        {
+            throw new VacationError('Нет доступа к вкладке «Маршруты»');
+        }
 
         $departments = [];
         foreach ($this->structure->orgChart($user->portal)->tree() as ['department' => $department, 'depth' => $depth])
@@ -68,7 +79,13 @@ final class RouteService
             'routes' => $this->all($user->portal),
             // Все отделы: тот, кто настраивает маршруты, видит их независимо от доступа к календарю
             'departments' => $departments,
-            'editorIds' => $this->roles->roles($user->portal)['routeEditors'],
+            'roles' => array_map(static fn(array $role) => ['id' => $role['id'], 'name' => $role['name']], array_values(array_filter(
+                $this->roles->all($user->portal),
+                static fn(array $role) => !$role['base'],
+            ))),
+            'canEdit' => $this->canEdit($user),
+            // Кому уходит заявка, если на шаге согласующего нет
+            'fallbackRole' => $this->roles->byLegacy($user->portal, RoleService::HR)['name'] ?? '',
         ];
     }
 
@@ -81,7 +98,7 @@ final class RouteService
     {
         if (!isset($this->cache[$portal->memberId]))
         {
-            $routes = array_map(self::toRoute(...), $this->storage->find($portal, Schema::ROUTES));
+            $routes = array_map(fn(array $item) => $this->upgrade($portal, self::toRoute($item)), $this->storage->find($portal, Schema::ROUTES));
             usort($routes, static fn(array $a, array $b) => [!$a['isDefault'], $a['sort'], $a['id']] <=> [!$b['isDefault'], $b['sort'], $b['id']]);
             if (!$routes || !$routes[0]['isDefault'])
             {
@@ -94,21 +111,69 @@ final class RouteService
     }
 
     /**
-     * Маршрут «По умолчанию», пока его не сохраняли: цепочка руководитель → ОК → директор, как в коробке.
-     * Срок подачи берётся из прежней настройки min_submit_days, чтобы не потерять её.
+     * Маршрут «По умолчанию», пока его не сохраняли: демо-цепочка руководитель → роль «Отдел кадров» → роль «Директор»,
+     * как в коробке. Срок подачи берётся из прежней настройки min_submit_days, чтобы не потерять её.
      */
     private function builtInDefault(Portal $portal): array
     {
         $step = static fn(int $id, string $name, string $kind) => [
-            'id' => $id, 'name' => $name, 'kind' => $kind, 'userId' => 0, 'submitDays' => 0, 'rejectDays' => 0, 'active' => true,
+            'id' => $id, 'name' => $name, 'kind' => $kind, 'userId' => 0, 'roleId' => 0, 'submitDays' => 0, 'rejectDays' => 0, 'active' => true,
         ];
         $steps = [$step(1, 'Руководитель', self::KIND_HEAD), $step(2, 'Отдел кадров', self::KIND_HR), $step(3, 'Директор', self::KIND_DIRECTOR)];
         $steps[0]['submitDays'] = $this->settings?->minSubmitDays($portal) ?? 0;
 
-        return [
+        return $this->upgrade($portal, [
             'id' => 0, 'isDefault' => true, 'name' => 'По умолчанию', 'active' => true, 'exclusive' => false, 'kinds' => [], 'departmentIds' => [],
             'sort' => 0, 'steps' => $steps, 'watchers' => [], 'updatedBy' => 0, 'updatedAt' => '',
-        ];
+        ]);
+    }
+
+    /**
+     * Прежние шаги и получатели «Отдел кадров» и «Директор» — это роли, перенесённые из прежних настроек.
+     */
+    private function upgrade(Portal $portal, array $route): array
+    {
+        $route['steps'] = array_map(fn(array $row) => $this->upgradeRow($portal, $row), $route['steps']);
+        $route['watchers'] = array_map(fn(array $row) => $this->upgradeRow($portal, $row), $route['watchers']);
+
+        return $route;
+    }
+
+    private function upgradeRow(Portal $portal, array $row): array
+    {
+        $kind = (string)($row['kind'] ?? '');
+        if ($kind === self::KIND_HR || $kind === self::KIND_DIRECTOR)
+        {
+            $role = $this->roles->byLegacy($portal, $kind === self::KIND_HR ? RoleService::HR : RoleService::DIRECTOR);
+            $row['kind'] = self::KIND_ROLE;
+            $row['roleId'] = $role['id'] ?? 0;
+        }
+        $row['roleId'] = (int)($row['roleId'] ?? 0);
+
+        return $row;
+    }
+
+    /**
+     * Названия маршрутов, где роль указана в шагах или среди получателей результата.
+     *
+     * @return list<string>
+     */
+    public function usingRole(Portal $portal, int $roleId): array
+    {
+        $names = [];
+        foreach ($this->all($portal) as $route)
+        {
+            foreach ([...$route['steps'], ...$route['watchers']] as $row)
+            {
+                if ($row['kind'] === self::KIND_ROLE && $row['roleId'] === $roleId)
+                {
+                    $names[] = $route['name'];
+                    break;
+                }
+            }
+        }
+
+        return $names;
     }
 
     public function defaultRoute(Portal $portal): array
@@ -168,17 +233,19 @@ final class RouteService
         $oldIds = array_column($existing['steps'] ?? [], 'id');
         $nextId = max([0, ...$oldIds]) + 1;
         $steps = [];
-        foreach (array_values((array)($data['steps'] ?? [])) as $number => $step)
+        foreach (array_values(array_filter((array)($data['steps'] ?? []), 'is_array')) as $number => $step)
         {
+            $step = $this->upgradeRow($portal, $step);
             $label = 'Шаг ' . ($number + 1) . ': ';
             $kind = (string)($step['kind'] ?? '');
             $userId = (int)($step['userId'] ?? 0);
+            $roleId = (int)($step['roleId'] ?? 0);
             $name = mb_substr(trim((string)($step['name'] ?? '')), 0, 100);
             $submitDays = (int)($step['submitDays'] ?? 0);
             $rejectDays = (int)($step['rejectDays'] ?? 0);
             if ($name === '')
             {
-                throw new VacationError($label . 'укажите название роли');
+                throw new VacationError($label . 'укажите название шага');
             }
             if (!in_array($kind, self::KINDS, true))
             {
@@ -188,6 +255,7 @@ final class RouteService
             {
                 throw new VacationError($label . 'выберите сотрудника');
             }
+            $this->assertRole($portal, $kind, $roleId, $label);
             if ($submitDays < 0 || $submitDays > 365 || $rejectDays < 0 || $rejectDays > 365)
             {
                 throw new VacationError($label . 'сроки указываются в днях от 0 до 365');
@@ -198,6 +266,7 @@ final class RouteService
                 'name' => $name,
                 'kind' => $kind,
                 'userId' => $kind === self::KIND_USER ? $userId : 0,
+                'roleId' => $kind === self::KIND_ROLE ? $roleId : 0,
                 'submitDays' => $submitDays,
                 'rejectDays' => $rejectDays,
                 'active' => self::flag($step['active'] ?? true),
@@ -207,7 +276,7 @@ final class RouteService
         {
             throw new VacationError('В маршруте от 1 до ' . RoutePlan::MAX_STEPS . ' шагов');
         }
-        $watchers = $this->watchers((array)($data['watchers'] ?? []));
+        $watchers = $this->watchers($portal, (array)($data['watchers'] ?? []));
 
         $conflict = $this->exclusiveConflict($portal, $route);
         if ($conflict !== null)
@@ -263,23 +332,6 @@ final class RouteService
     }
 
     /**
-     * @param list<int> $userIds
-     */
-    public function saveEditors(CurrentUser $user, array $userIds): array
-    {
-        $this->assertEditor($user);
-        $ids = self::ids($userIds);
-        // Без администратора нельзя исключить себя: иначе маршруты станет некому править
-        if (!$user->isAdmin && !in_array($user->userId, $ids, true))
-        {
-            throw new VacationError('Себя из списка может убрать только администратор портала');
-        }
-        $this->roles->set($user->portal, RoleService::ROUTE_EDITOR, $ids);
-
-        return ['editorIds' => $this->roles->roles($user->portal)['routeEditors']];
-    }
-
-    /**
      * Маршрут для заявки, снимок для kbreq.ROUTE_DATA: самый точный из настроенных, иначе «По умолчанию».
      * null — у маршрута все шаги выключены.
      *
@@ -317,18 +369,20 @@ final class RouteService
      *
      * @return list<array{kind: string, userId: int, events: list<string>, task: string, taskDays: int}>
      */
-    private function watchers(array $rows): array
+    private function watchers(Portal $portal, array $rows): array
     {
         if (count($rows) > self::MAX_WATCHERS)
         {
             throw new VacationError('Уведомить о результате можно не больше ' . self::MAX_WATCHERS . ' получателей');
         }
         $watchers = [];
-        foreach (array_values($rows) as $number => $row)
+        foreach (array_values(array_filter($rows, 'is_array')) as $number => $row)
         {
+            $row = $this->upgradeRow($portal, $row);
             $label = 'Уведомление ' . ($number + 1) . ': ';
             $kind = (string)($row['kind'] ?? '');
             $userId = (int)($row['userId'] ?? 0);
+            $roleId = (int)($row['roleId'] ?? 0);
             $events = array_values(array_intersect(self::EVENTS, array_map('strval', (array)($row['events'] ?? []))));
             $task = (string)($row['task'] ?? 'none');
             $taskDays = (int)($row['taskDays'] ?? 0);
@@ -340,6 +394,7 @@ final class RouteService
             {
                 throw new VacationError($label . 'выберите сотрудника');
             }
+            $this->assertRole($portal, $kind, $roleId, $label);
             if (!$events)
             {
                 throw new VacationError($label . 'выберите, о чём уведомлять');
@@ -355,6 +410,7 @@ final class RouteService
             $watchers[] = [
                 'kind' => $kind,
                 'userId' => $kind === self::KIND_USER ? $userId : 0,
+                'roleId' => $kind === self::KIND_ROLE ? $roleId : 0,
                 'events' => $events,
                 'task' => $task,
                 'taskDays' => $task === 'none' ? 0 : $taskDays,
@@ -368,7 +424,20 @@ final class RouteService
     {
         if (!$this->canEdit($user))
         {
-            throw new VacationError('Маршруты настраивают администратор и сотрудники из списка на вкладке «Маршруты»');
+            throw new VacationError('Маршруты настраивают администратор портала и роли с правом изменять «Маршруты» на вкладке «Доступ»');
+        }
+    }
+
+    private function assertRole(Portal $portal, string $kind, int $roleId, string $label): void
+    {
+        if ($kind !== self::KIND_ROLE)
+        {
+            return;
+        }
+        $role = $roleId > 0 ? $this->roles->byId($portal, $roleId) : null;
+        if ($role === null || $role['base'])
+        {
+            throw new VacationError($label . 'выберите роль');
         }
     }
 
