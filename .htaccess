@@ -1,0 +1,6 @@
+# Нужен, только если корень сайта нельзя направить в папку public (виртуальный хостинг).
+# Служебные файлы и папки закрыты, всё остальное отдаётся из public.
+RewriteEngine On
+RewriteRule ^(\.env|\.git|composer\.(json|lock)|phpunit\.xml|src|vendor|bin|templates|tests|docker|scripts)(/|$) - [F,L]
+RewriteCond %{REQUEST_URI} !^/public/
+RewriteRule ^(.*)$ public/$1 [L]
