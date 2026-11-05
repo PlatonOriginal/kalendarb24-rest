@@ -8,7 +8,7 @@
     <script src="https://api.bitrix24.com/api/v1/"></script>
 </head>
 <body>
-<h1>Отпуска</h1>
+<header class="app-head"><h1>Отпуска</h1><button type="button" id="help" class="help-btn" hidden title="Пошаговые подсказки по приложению">Гид</button></header>
 <nav class="tabs">
     <a href="#calendar" data-tab="calendar">Календарь</a>
     <a href="#dashboard" data-tab="dashboard" hidden>Дашборд</a>
@@ -83,31 +83,35 @@
 
 <section id="tab-settings" hidden>
     <p class="hint" id="settings-readonly" hidden>Вам доступен только просмотр настроек.</p>
-    <h2>Срок подачи заявки</h2>
-    <p class="hint">За сколько дней до начала подавать заявку, задаётся в шагах маршрутов на вкладке «Маршруты», в том числе в маршруте «По умолчанию».</p>
-    <div class="form">
-        <label class="check"><input type="checkbox" id="min-submit-exempt-unpaid"> Не проверять срок подачи для отпуска без сохранения заработной платы</label>
+    <p class="hint">Кто согласует заявки и их отмену, задают маршруты на вкладке «Маршруты». Какие отделы видны в календаре и чьи заявки открываются, задаётся в ролях на вкладке «Доступ».</p>
+    <div class="settings-grid" id="settings-options">
+        <div class="panel" id="settings-submit">
+            <h2>Срок подачи заявки</h2>
+            <p class="hint">За сколько дней до начала подавать заявку, задаётся в шагах маршрутов согласования, в том числе в маршруте «По умолчанию».</p>
+            <label class="check"><input type="checkbox" id="min-submit-exempt-unpaid"> Не проверять срок подачи для отсутствия без сохранения заработной платы</label>
+        </div>
+        <div class="panel" id="settings-cancel">
+            <h2>Срок отмены</h2>
+            <p class="hint">Отмену утверждённого отсутствия согласуют по маршрутам отзыва, там же задаётся её срок. Это значение действует, когда у маршрута отзыва срок не задан или маршрут не подошёл.</p>
+            <label>Отменить не позже чем за, раб. дн. <input type="number" id="cancel-days" min="0" max="365"></label>
+        </div>
+        <div class="panel" id="settings-annual">
+            <h2>Ежегодный отпуск</h2>
+            <p class="hint">Сколько календарных дней начисляется в каждую годовщину приёма на работу (от 28 до 100). Остатки и даты приёма вносят на вкладке «Остатки».</p>
+            <label>Дней за рабочий год <input type="number" id="annual-days" min="28" max="100"></label>
+        </div>
     </div>
-    <h2>Отмена утверждённого отсутствия</h2>
-    <p class="hint">Сотрудник может отменить утверждённое отсутствие не позже чем за указанное число рабочих дней до начала. Отмену согласуют руководитель, затем участник роли «Отдел кадров» с вкладки «Доступ» (пока у отмены нет своих маршрутов); после этого событие удаляется из календаря.</p>
-    <div class="form">
-        <label>Не позже чем за, раб. дней <input type="number" id="cancel-days" min="0" max="365"></label>
+    <p><button type="button" id="save-options" class="primary">Сохранить настройки</button></p>
+    <div class="panel" id="settings-limits">
+        <h2>Лимиты отделов</h2>
+        <p class="hint">Пустое поле — без ограничения. Лимит проверяется при подаче заявки, руководитель отдела в нём не считается, если не отмечено «Учитывать руководителя».
+            Заявки относятся к отделу, в котором сотрудник был при подаче.</p>
+        <table id="limits">
+            <thead><tr><th>Отдел</th><th>Максимум отсутствующих в один день</th><th>Максимум дней пересечения двух отсутствий</th><th>Учитывать подотделы</th><th>Учитывать руководителя</th></tr></thead>
+            <tbody></tbody>
+        </table>
+        <p><button type="button" id="save-limits" class="primary">Сохранить лимиты</button></p>
     </div>
-    <h2>Ежегодный отпуск</h2>
-    <p class="hint">Сколько календарных дней начисляется в каждую годовщину приёма на работу (от 28 до 100). Остатки и даты приёма вносят на вкладке «Остатки».</p>
-    <div class="form">
-        <label>Дней за рабочий год <input type="number" id="annual-days" min="28" max="100"></label>
-    </div>
-    <p class="hint">Какие отделы видны в календаре и чьи заявки открываются, задаётся в ролях на вкладке «Доступ».</p>
-    <p><button type="button" id="save-options">Сохранить настройки</button></p>
-    <h2>Лимиты отделов</h2>
-    <p class="hint">Пустое поле — без ограничения. Лимит проверяется при подаче заявки, руководитель отдела в нём не считается, если не отмечено «Учитывать руководителя».
-        Заявки относятся к отделу, в котором сотрудник был при подаче.</p>
-    <table id="limits">
-        <thead><tr><th>Отдел</th><th>Максимум отсутствующих в один день</th><th>Максимум дней пересечения двух отсутствий</th><th>Учитывать подотделы</th><th>Учитывать руководителя</th></tr></thead>
-        <tbody></tbody>
-    </table>
-    <p><button type="button" id="save-limits">Сохранить лимиты</button></p>
 </section>
 
 
@@ -117,6 +121,7 @@
 <script src="/assets/dashboard.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/dashboard.js') ?>"></script>
 <script src="/assets/access.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/access.js') ?>"></script>
 <script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
+<script src="/assets/tour.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/tour.js') ?>"></script>
 <script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>
 </body>
 </html>

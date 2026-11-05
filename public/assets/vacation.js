@@ -587,10 +587,21 @@
                     openTab('calendar');
                 }
             });
+            window.Kb24Tour.init({
+                esc: esc,
+                me: function () { return state.me; },
+                openTab: function (tab) {
+                    if (location.hash !== '#' + tab || el('tab-' + tab).hidden) {
+                        location.hash = tab;
+                        openTab(tab);
+                    }
+                }
+            });
             if (card) {
                 showCard(card);
             } else {
                 openTab(location.hash.replace('#', '') || 'calendar');
+                window.Kb24Tour.offer();
             }
             loadToApprove();
         }).catch(showError);

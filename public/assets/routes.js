@@ -91,7 +91,8 @@ window.Kb24Routes = (function () {
             + '<h2>Маршруты отзыва</h2>' + add('cancel', '+ Новый маршрут отзыва')
             + '<p class="hint">Кто согласует отмену утверждённого отсутствия. Маршрут выбирается по тем же правилам, что и маршрут согласования, '
             + 'и шаги пропускаются так же. Если не подошёл ни один маршрут отзыва, отсутствие отменяется сразу, а узнают об этом те, кто согласовал заявку. '
-            + 'Отменить отсутствие сотрудник может не позже срока из вкладки «Настройки». Отказ в отмене оставляет отсутствие в силе. '
+            + 'Срок отмены задаётся в маршруте отзыва; если он не задан или маршрут не подошёл, действует срок из вкладки «Настройки» (сейчас '
+            + esc(data.cancelDaysDefault) + ' раб. дн.). Отказ в отмене оставляет отсутствие в силе. '
             + 'Получатели из «Уведомить о результате» узнают об отмене и подтверждают ознакомление.</p>'
             + (data.cancelRoutes.length ? '<div class="routes">' + data.cancelRoutes.map(function (route, index) { return card(route, index, 'cancel'); }).join('') + '</div>'
                 : '<p class="hint">Маршрутов отзыва нет: отсутствия отменяются без согласования.</p>');
@@ -99,7 +100,7 @@ window.Kb24Routes = (function () {
         root().querySelectorAll('[data-add]').forEach(function (button) {
             button.addEventListener('click', function () {
                 var purpose = button.dataset.add;
-                openEditor({ id: 0, purpose: purpose, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [],
+                openEditor({ id: 0, purpose: purpose, isDefault: false, name: '', active: true, exclusive: false, kinds: [], departmentIds: [], cancelDays: null,
                     steps: [newStep('Руководитель отдела', 'head')], watchers: [] });
             });
         });
@@ -131,7 +132,9 @@ window.Kb24Routes = (function () {
             + (view.data.canEdit ? ' <button type="button" data-route="' + index + '" data-purpose="' + purpose + '">Изменить</button>' : '') + '</div>'
             + '<div class="hint">' + (route.isDefault ? 'Когда не подошёл ни один другой маршрут'
                 : 'Виды: ' + esc(kinds.length ? kinds.join(', ') : 'все') + ' · Отделы: ' + esc(departments.length ? departments.join(', ') + ' (с подотделами)' : 'все'))
-            + (cancel ? '' : ' · Подача не позже чем за ' + esc(minDays) + ' дн.') + '</div>'
+            + (cancel ? ' · Отменить не позже чем за ' + esc(route.cancelDays === null || route.cancelDays === undefined ? view.data.cancelDaysDefault : route.cancelDays) + ' раб. дн.'
+                + (route.cancelDays === null || route.cancelDays === undefined ? ' (из настроек)' : '')
+                : ' · Подача не позже чем за ' + esc(minDays) + ' дн.') + '</div>'
             + '<ol class="route-steps">' + route.steps.map(function (step) {
                 return '<li class="' + (step.active ? '' : 'is-off') + '"><b>' + esc(step.name) + '</b> — ' + esc(who(step))
                     + (step.rejectDays ? ', отклонить не позже чем за ' + esc(step.rejectDays) + ' дн. до начала' : '')
@@ -176,6 +179,8 @@ window.Kb24Routes = (function () {
             + (route.isDefault ? '' : '<label class="check"><input type="checkbox" name="active"' + (route.active ? ' checked' : '') + '> маршрут включён</label>')
             + (route.isDefault || cancel ? '' : '<label class="check" title="Например, для больничного: его вносят по факту"><input type="checkbox" name="autoApprove"'
                 + (route.autoApprove ? ' checked' : '') + '> утверждать сразу, без согласования (шаги ниже не действуют)</label>')
+            + (cancel ? '<label title="Пусто — срок из вкладки «Настройки»">Отменить не позже чем за, раб. дн. <input type="number" name="cancelDays" min="0" max="365" value="'
+                + esc(route.cancelDays === null || route.cancelDays === undefined ? '' : route.cancelDays) + '" placeholder="' + esc(view.data.cancelDaysDefault) + ' (из настроек)"></label>' : '')
             + '</div>'
             + (route.isDefault ? '<p class="hint">Действует на все виды отсутствия и отделы, когда не подошёл ни один другой маршрут. Выключить или удалить его нельзя.</p>' : '<div class="route-cols">'
             + '<div><h3>Виды отсутствия</h3><p class="hint">Ничего не выбрано — все виды.</p>'
@@ -381,6 +386,10 @@ window.Kb24Routes = (function () {
                 payload.exclusive = form.querySelector('[name="exclusive"]').checked;
                 var auto = form.querySelector('[name="autoApprove"]');
                 payload.autoApprove = auto ? auto.checked : false;
+                var cancelDays = form.querySelector('[name="cancelDays"]');
+                if (cancelDays) {
+                    payload.cancelDays = cancelDays.value.trim();
+                }
                 payload.kinds = Array.prototype.map.call(form.querySelectorAll('[name="kind"]:checked'), function (input) { return input.value; });
                 payload.departmentIds = Array.prototype.map.call(form.querySelector('[name="departments"]').selectedOptions, function (option) { return Number(option.value); });
             }
