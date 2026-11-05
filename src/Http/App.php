@@ -141,6 +141,11 @@ final class App
         {
             fastcgi_finish_request();
         }
+        elseif (function_exists('litespeed_finish_request'))
+        {
+            // LiteSpeed (LSAPI) на виртуальных хостингах
+            litespeed_finish_request();
+        }
     }
 
     private function route(string $path, array $post, array $server): void
