@@ -575,6 +575,42 @@ final class RouteServiceTest extends TestCase
         self::assertSame(['rejected'], array_column($card['cancelRoute']['steps'], 'state'));
     }
 
+    public function testCancelDeadlineComesFromCancelRouteOrSettings(): void
+    {
+        self::assertNull($this->routes->cancelRoutes($this->portal)[0]['cancelDays'], 'у демо-маршрута срок из настроек');
+        $this->saveRoute(['purpose' => 'cancel', 'name' => 'Отзыв бухгалтерии', 'departmentIds' => [14], 'cancelDays' => '100',
+            'steps' => [$this->step('Юрист', 'user', ['userId' => self::LAWYER])]]);
+        self::assertSame(100, array_column($this->routes->cancelRoutes($this->portal), 'cancelDays', 'name')['Отзыв бухгалтерии']);
+        $request = $this->approvedWithWatchers();
+        $this->rebuild();
+        self::assertSame('Отменить можно не позже чем за 100 раб. дн. до начала', $this->service->card($this->user(self::ACCOUNTANT), $request['id'])['cancelHint'] ?? null);
+        try
+        {
+            $this->service->startCancellation($this->user(self::ACCOUNTANT), $request['id'], 'Перенос');
+            self::fail('срок маршрута отзыва прошёл');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringContainsString('100 раб. дн.', $e->getMessage());
+        }
+
+        // Пустой срок — из настроек, и отмену можно запросить
+        $route = array_column($this->routes->cancelRoutes($this->portal), null, 'name')['Отзыв бухгалтерии'];
+        $this->saveRoute(['purpose' => 'cancel', 'id' => $route['id'], 'name' => $route['name'], 'departmentIds' => [14], 'cancelDays' => '', 'steps' => $route['steps']]);
+        $request = $this->cancel($request['id']);
+        self::assertSame(Status::CANCELLING, $request['status']);
+
+        try
+        {
+            $this->saveRoute(['purpose' => 'cancel', 'name' => 'Неверный срок', 'cancelDays' => '-1', 'steps' => [$this->step('Юрист', 'user', ['userId' => self::LAWYER])]]);
+            self::fail('отрицательный срок');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringStartsWith('Срок отмены', $e->getMessage());
+        }
+    }
+
     public function testOldCancelledWatchersMoveToCancelRoutes(): void
     {
         $this->http->items['kbroute'] = [

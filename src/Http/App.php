@@ -40,7 +40,7 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/requests              (POST kind, dateFrom, dateTo) подать заявку
  *   /api/requests/<id>         карточка заявки с историей и доступными действиями
  *   /api/requests/<id>/approve | reject (reason) | withdraw   (POST) решения по заявке
- *   /api/settings/options      (POST max_cancel_working_days, annual_days, min_submit_exempt_unpaid; право изменять «Настройки») настройки в app.option
+ *   /api/settings/options      (POST max_cancel_working_days — срок отмены по умолчанию, annual_days, min_submit_exempt_unpaid; право изменять «Настройки») настройки в app.option
  *   /api/requests/<id>/cancel (reason) | cancel-approve | cancel-refuse (reason)   (POST) отмена утверждённой заявки
  * Блок 4:
  *   уведомления о заявках уходят после ответа браузеру; ссылка из уведомления открывает /app

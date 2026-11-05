@@ -520,7 +520,9 @@ final class RequestService
         {
             return 'Отменить можно только утверждённое отсутствие';
         }
-        $minDays = $this->settings?->maxCancelWorkingDays($portal) ?? Settings::DEFAULTS['max_cancel_working_days'];
+        $minDays = $this->routes?->cancelDaysFor($portal, $request['deptId'], $request['kind'])
+            ?? $this->settings?->maxCancelWorkingDays($portal)
+            ?? Settings::DEFAULTS['max_cancel_working_days'];
         $start = new \DateTimeImmutable($request['dateFrom']);
         if ($start <= $this->today || $this->calendar->workingDays($portal)->countBetween($this->today, $start) < $minDays)
         {

@@ -94,6 +94,8 @@ final class RouteService
             'canEdit' => $this->canEdit($user),
             // Кому уходит заявка, если на шаге согласующего нет
             'fallbackRole' => $this->roles->byLegacy($user->portal, RoleService::HR)['name'] ?? '',
+            // Срок отмены из «Настроек»: для маршрутов отзыва без своего срока и когда маршрут не подошёл
+            'cancelDaysDefault' => $this->settings?->maxCancelWorkingDays($user->portal) ?? Settings::DEFAULTS['max_cancel_working_days'],
         ];
     }
 
@@ -250,6 +252,7 @@ final class RouteService
             'ACTIVE' => $route['active'] ? 'Y' : 'N',
             'EXCLUSIVE' => $route['exclusive'] ? 'Y' : 'N',
             'AUTO_APPROVE' => !empty($route['autoApprove']) ? 'Y' : 'N',
+            'CANCEL_DAYS' => isset($route['cancelDays']) ? (string)$route['cancelDays'] : '',
             'KINDS' => implode(',', $route['kinds']),
             'DEPTS' => implode(',', $route['departmentIds']),
             'SORT' => 100,
@@ -366,6 +369,7 @@ final class RouteService
             'exclusive' => !$isDefault && self::flag($data['exclusive'] ?? false),
             // Утверждать сразу: шаги сохраняются, но не действуют, пока флажок не снят
             'autoApprove' => !$isDefault && !$cancel && self::flag($data['autoApprove'] ?? false),
+            'cancelDays' => $cancel ? self::cancelDays($data['cancelDays'] ?? null) : null,
             'kinds' => $isDefault ? [] : array_values(array_intersect(array_keys(Kinds::all()), array_map('strval', (array)($data['kinds'] ?? [])))),
             'departmentIds' => $isDefault ? [] : self::ids($data['departmentIds'] ?? []),
         ];
@@ -397,7 +401,7 @@ final class RouteService
             $userId = (int)($step['userId'] ?? 0);
             $roleId = (int)($step['roleId'] ?? 0);
             $name = mb_substr(trim((string)($step['name'] ?? '')), 0, 100);
-            // Срок отмены один для всех: настройка «за сколько рабочих дней», а не шаги маршрута отзыва
+            // Срок отмены задаётся маршруту отзыва целиком (cancelDays), а не его шагам
             $submitDays = $cancel ? 0 : (int)($step['submitDays'] ?? 0);
             $rejectDays = $cancel ? 0 : (int)($step['rejectDays'] ?? 0);
             if ($name === '')
@@ -508,6 +512,17 @@ final class RouteService
         $steps = $route !== null ? array_values(array_filter($route['steps'], static fn(array $step) => $step['active'])) : [];
 
         return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers']] : null;
+    }
+
+    /**
+     * Срок отмены из подходящего маршрута отзыва: не позже чем за N рабочих дней до начала.
+     * null — маршрут не подошёл или срок у него не задан, действует значение из настроек.
+     */
+    public function cancelDaysFor(Portal $portal, int $departmentId, string $kind): ?int
+    {
+        $route = RoutePlan::pick($this->cancelRoutes($portal), $kind, $this->departmentChain($portal, $departmentId));
+
+        return $route['cancelDays'] ?? null;
     }
 
     /**
@@ -659,6 +674,8 @@ final class RouteService
             'active' => ($values['ACTIVE'] ?? '') === 'Y',
             'exclusive' => ($values['EXCLUSIVE'] ?? '') === 'Y',
             'autoApprove' => ($values['AUTO_APPROVE'] ?? '') === 'Y',
+            // Только у маршрутов отзыва; null — срок из настроек
+            'cancelDays' => is_numeric($values['CANCEL_DAYS'] ?? null) ? (int)$values['CANCEL_DAYS'] : null,
             'kinds' => array_values(array_filter(explode(',', (string)($values['KINDS'] ?? '')))),
             'departmentIds' => self::ids(explode(',', (string)($values['DEPTS'] ?? ''))),
             'sort' => (int)($values['SORT'] ?? 100),
@@ -675,6 +692,21 @@ final class RouteService
     private static function ids(mixed $values): array
     {
         return array_values(array_unique(array_filter(array_map('intval', (array)$values), static fn(int $id) => $id > 0)));
+    }
+
+    private static function cancelDays(mixed $value): ?int
+    {
+        $value = trim((string)$value);
+        if ($value === '')
+        {
+            return null;
+        }
+        if (!ctype_digit($value) || (int)$value > 365)
+        {
+            throw new VacationError('Срок отмены указывается в рабочих днях от 0 до 365 или остаётся пустым');
+        }
+
+        return (int)$value;
     }
 
     private static function flag(mixed $value): bool

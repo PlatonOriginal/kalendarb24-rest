@@ -233,3 +233,30 @@ h3 { font-size: 14px; font-weight: 600; margin: 16px 0 4px; }
 .kb-seg:last-child { border-right: 0; }
 .kb-seg.is-active { background: var(--kb-accent); color: #fff; }
 .kb-zero { margin-top: 6px; font-size: 13px; color: #525c69; }
+
+/* Настройки: блоки карточками */
+.panel { border: 1px solid #e6e9ec; border-radius: 8px; padding: 12px 16px; margin: 0 0 16px; background: #fff; }
+.panel h2 { margin: 0 0 6px; }
+.panel .hint { margin: 0 0 10px; }
+.panel label { display: block; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; max-width: 1100px; }
+.settings-grid .panel { margin: 0; }
+#tab-settings > p { max-width: 1100px; }
+#settings-limits { max-width: 1100px; overflow-x: auto; }
+
+/* Гид */
+.app-head { display: flex; align-items: center; gap: 12px; }
+.app-head h1 { margin-right: auto; }
+.help-btn { border-radius: 14px; padding: 4px 12px; }
+.kb-tour { position: fixed; inset: 0; z-index: 1250; }
+.kb-tour-spot { position: fixed; border-radius: 6px; box-shadow: 0 0 0 9999px rgba(15, 23, 42, .55); transition: all .2s; pointer-events: none; }
+.kb-tour-pop { position: fixed; width: 380px; max-width: calc(100vw - 24px); padding: 16px; border-radius: 8px; background: #fff; color: #333; line-height: 1.5; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+.kb-tour-pop.is-center { left: 50% !important; top: 25% !important; transform: translateX(-50%); }
+.kb-tour-spot[hidden] + .kb-tour-pop { box-shadow: 0 0 0 9999px rgba(15, 23, 42, .55), 0 10px 30px rgba(0, 0, 0, .25); }
+.kb-tour-pop h4 { margin: 0 0 8px; font-size: 16px; padding-right: 24px; }
+.kb-tour-pop p { margin: 0 0 8px; }
+.kb-tour-count { font-size: 12px; color: #828b95; margin-bottom: 4px; }
+.kb-tour-close { position: absolute; top: 8px; right: 10px; border: 0; background: none; font-size: 20px; line-height: 1; color: #828b95; cursor: pointer; }
+.kb-tour-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.kb-tour-menu { position: fixed; z-index: 1240; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #fff; border: 1px solid #e6e9ec; border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); }
+.kb-tour-menu button { text-align: left; }
