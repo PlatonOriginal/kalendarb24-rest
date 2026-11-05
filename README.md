@@ -157,11 +157,7 @@
 
 Обновление вручную: `cd ~/vacation && git pull && composer install --no-dev --optimize-autoloader`.
 
-Автообновление: `bin/deploy.sh` по cron раз в 10 минут забирает новые коммиты из `main` (только перемотка вперёд) и пересобирает автозагрузку; без новых коммитов ничего не делает:
-```
-*/10 * * * * /bin/sh $HOME/aplat.by/vacation/bin/deploy.sh >> $HOME/logs/vacation-deploy.log 2>&1
-```
-Пути к PHP и composer меняются переменными `PHP` и `COMPOSER` (по умолчанию `/usr/local/bin/php` и `~/composer.phar`).
+На hoster.by то же одной командой: `sh ~/aplat.by/vacation/bin/update.sh` — забирает новые коммиты `main` и пересобирает автозагрузку; без новых коммитов пишет «Обновлений нет». Пути к PHP и composer меняются переменными `PHP` и `COMPOSER` (по умолчанию `/usr/local/bin/php` и `~/composer.phar`).
 
 ## Скрипты для Windows
 
