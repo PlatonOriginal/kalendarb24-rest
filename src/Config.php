@@ -17,9 +17,22 @@ final class Config
     ) {
     }
 
-    public static function fromEnv(): self
+    /**
+     * Переменные окружения (Docker: env_file), а без них — файл .env в корне приложения (виртуальный хостинг).
+     * Переменная окружения важнее строки из файла.
+     */
+    public static function fromEnv(?string $envFile = null): self
     {
-        $get = static fn(string $name, string $default = ''): string => (string)(getenv($name) ?: $default);
+        $file = self::readEnvFile($envFile ?? dirname(__DIR__) . '/.env');
+        $get = static function (string $name, string $default = '') use ($file): string {
+            $value = getenv($name);
+            if ($value === false || $value === '')
+            {
+                $value = $file[$name] ?? '';
+            }
+
+            return $value !== '' ? $value : $default;
+        };
 
         return new self(
             $get('B24_CLIENT_ID'),
@@ -33,5 +46,38 @@ final class Config
             // Код приложения в ссылке /marketplace/view/<код>/: у локального приложения это client_id
             $get('APP_CODE', $get('B24_CLIENT_ID')),
         );
+    }
+
+    /**
+     * Строки KEY=VALUE; пустые строки и # комментарии пропускаются, кавычки вокруг значения снимаются.
+     *
+     * @return array<string, string>
+     */
+    public static function readEnvFile(string $path): array
+    {
+        if (!is_file($path) || !is_readable($path))
+        {
+            return [];
+        }
+        $values = [];
+        foreach (file($path, FILE_IGNORE_NEW_LINES) ?: [] as $line)
+        {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#' || !str_contains($line, '='))
+            {
+                continue;
+            }
+            [$name, $value] = array_map('trim', explode('=', $line, 2));
+            if (strlen($value) >= 2 && ($value[0] === '"' || $value[0] === "'") && $value[-1] === $value[0])
+            {
+                $value = substr($value, 1, -1);
+            }
+            if (preg_match('/^[A-Z][A-Z0-9_]*$/', $name))
+            {
+                $values[$name] = $value;
+            }
+        }
+
+        return $values;
     }
 }
