@@ -260,3 +260,158 @@ h3 { font-size: 14px; font-weight: 600; margin: 16px 0 4px; }
 .kb-tour-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .kb-tour-menu { position: fixed; z-index: 1240; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #fff; border: 1px solid #e6e9ec; border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); }
 .kb-tour-menu button { text-align: left; }
+
+/* Вкладки не переносятся по словам: если не помещаются (планшет, узкое окно), лента прокручивается сама */
+.tabs { overflow-x: auto; scrollbar-width: thin; }
+.tabs a { white-space: nowrap; flex: none; }
+/* Широкая таблица остатков на узком окне прокручивается внутри себя, а не вся страница */
+#balances [data-role="table"] { overflow-x: auto; }
+
+/* Список отсутствующих по дням (месяц на телефоне) и сворачиваемые обозначения */
+.kb-legend-box > summary { display: none; }
+.kb-view-agenda { grid-template-columns: 1fr; }
+.kb-view-agenda .kb-day { min-height: 34px; }
+.kb-agenda-title { margin: 16px 0 6px; font-size: 14px; }
+.kb-agenda { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--kb-border); }
+.kb-agenda-day { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--kb-border); cursor: pointer; }
+.kb-agenda-day.is-weekend .kb-agenda-date { color: #b91c1c; }
+.kb-agenda-day.is-full { background: var(--kb-full); }
+.kb-agenda-day.is-today .kb-agenda-date b { color: var(--kb-accent); }
+.kb-agenda-date { flex: none; width: 58px; display: flex; flex-direction: column; align-items: center; color: var(--kb-muted); font-size: 12px; line-height: 1.2; }
+.kb-agenda-date b { font-size: 17px; color: #333; white-space: nowrap; }
+.kb-agenda-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.kb-agenda-chips .kb-chip { font-size: 13px; padding: 3px 8px; max-width: 100%; }
+.kb-agenda-chips .kb-chip.st-pending { padding: 1px 6px; }
+
+/*
+ * Телефон и мобильное приложение Битрикс24. Всё, что ниже, действует только на узком экране:
+ * десктоп от 1280 px выглядит как раньше. Таблицы превращаются в карточки (подписи ячеек ставит mobile.js),
+ * формы и настройки складываются в одну колонку, поля ввода во всю ширину.
+ */
+@media (max-width: 640px) {
+    body { margin: 12px; }
+    h1 { font-size: 20px; }
+    h2 { margin-top: 18px; }
+    /* 16px в полях: иначе iOS приближает страницу при фокусе */
+    input, select, textarea, button { font-size: 16px; }
+    button, select, input:not([type="checkbox"]):not([type="radio"]) { min-height: 40px; }
+
+    /* Вкладки лентой с горизонтальной прокруткой внутри себя */
+    .tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; gap: 18px; margin-left: -12px; margin-right: -12px; padding: 0 12px; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs a { white-space: nowrap; flex: none; padding: 10px 0; }
+
+    /* Таблицы карточками */
+    table.list, table.balances, table.route-table, table.kb-list, #limits { display: block; max-width: none; }
+    table.list thead, table.balances thead, table.route-table thead, table.kb-list thead, #limits thead { display: none; }
+    table.list tbody, table.balances tbody, table.route-table tbody, table.kb-list tbody, #limits tbody { display: block; }
+    table.list tr, table.balances tr, table.route-table tr, table.kb-list tr, #limits tr {
+        display: block; margin: 0 0 10px; padding: 8px 12px; border: 1px solid #e6e9ec; border-radius: 8px; background: #fff;
+    }
+    table.list td, table.balances td, table.route-table td, table.kb-list td, #limits td {
+        display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 5px 0; border: 0; text-align: right; min-width: 0;
+    }
+    table.list td::before, table.balances td::before, table.route-table td::before, table.kb-list td::before, #limits td::before {
+        content: attr(data-label); flex: none; max-width: 45%; color: #828b95; text-align: left;
+    }
+    table.list td:not([data-label])::before, table.balances td:not([data-label])::before, table.route-table td:not([data-label])::before,
+    table.kb-list td:not([data-label])::before, #limits td:not([data-label])::before { display: none; }
+    table.list td[colspan], table.kb-list td[colspan], table.balances td[colspan] { display: block; text-align: left; }
+    /* Номер заявки — заголовком карточки: «№ 15» */
+    #my-requests td:first-child[data-label], #approve-requests td:first-child[data-label], #ack-requests td:first-child[data-label] {
+        display: block; text-align: left; font-weight: 600; padding-bottom: 2px;
+    }
+    #my-requests td:first-child[data-label]::before, #approve-requests td:first-child[data-label]::before, #ack-requests td:first-child[data-label]::before {
+        content: attr(data-label) "\00a0"; color: inherit;
+    }
+    /* Первая ячейка с именем сотрудника — заголовок карточки, без подписи */
+    table.kb-list td:first-child, table.balances td:first-child { justify-content: flex-start; text-align: left; font-weight: 600; }
+    table.kb-list td:first-child::before, table.balances td:first-child::before { display: none; }
+    table.balances td[data-role="updated"]:empty { display: none; }
+    table.list tr:has(td[colspan]) { border: 0; padding: 0; background: none; }
+    .list tbody tr:hover { background: #fff; }
+    .list tbody tr:active { background: #f5f7f8; }
+    /* Поля внутри карточек */
+    table.balances td input, table.route-table td input:not([type="checkbox"]), table.route-table td select, #limits td input:not([type="checkbox"]) {
+        flex: 1 1 auto; width: auto !important; min-width: 0; max-width: 60%;
+    }
+    table.balances td:last-child button { width: 100%; }
+    table.balances td:last-child:empty { display: none; }
+    #limits td:first-child { font-weight: 600; justify-content: flex-start; text-align: left; }
+    #limits td:first-child::before { display: none; }
+    #tab-balances table, .route-table { max-width: none; }
+
+    /* Форма новой заявки и прочие формы — в одну колонку */
+    .form { flex-direction: column; align-items: stretch; }
+    .form label { width: 100%; }
+    .form label input:not([type="checkbox"]), .form label select { width: 100%; box-sizing: border-box; }
+    .form > button, .form label > button { width: 100%; }
+    .form label.check { flex-direction: row; }
+
+    /* Карточка заявки */
+    .card dl { grid-template-columns: 1fr; gap: 0; }
+    .card dt { font-size: 12px; margin-top: 8px; }
+    .card .actions { flex-direction: column; align-items: stretch; }
+    .card .actions > * { width: 100%; box-sizing: border-box; }
+    .card .actions .check { display: flex; align-items: center; gap: 6px; }
+    .card .actions .check input { width: auto; }
+    .card ul, .card ol { padding-left: 20px; }
+    .card .card-steps { padding-left: 0; }
+
+    /* Календарь */
+    .kb-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+    .kb-control select, .kb-control input { max-width: none; width: 100%; box-sizing: border-box; }
+    .kb-segmented { display: flex; }
+    .kb-seg { flex: 1; }
+    .kb-nav { display: flex; }
+    .kb-period { flex: 1; min-width: 0; }
+    .kb-legend-box > summary { display: list-item; cursor: pointer; color: #2066b0; padding: 4px 0; }
+    .kb-legend { grid-template-columns: 1fr; gap: 8px; margin-top: 6px; }
+    .kb-view-quarter, .kb-view-year { grid-template-columns: 1fr; }
+    .kb-overlay { padding: 16px 8px; align-items: flex-end; }
+    .kb-modal { padding: 16px; }
+    .kb-modal .actions { flex-direction: column-reverse; align-items: stretch; }
+    .kb-day-list li { font-size: 14px; }
+
+    /* Дашборд */
+    .kb-dash-section { padding: 12px; }
+    .kb-dash-pair { grid-template-columns: 1fr; }
+    .kb-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .kb-tile { padding: 10px; }
+    .kb-tile-value { font-size: 24px; }
+    .kb-hbar { grid-template-columns: minmax(90px, 38%) 1fr auto; gap: 6px; }
+    .kb-bar-label { font-size: 10px; }
+    .kb-bar-value { font-size: 10px; }
+
+    /* Настройки, маршруты, доступ, остатки — одна колонка */
+    .settings-grid { grid-template-columns: 1fr; }
+    .panel { padding: 12px; }
+    #settings-limits { overflow-x: visible; }
+    .route { padding: 10px; }
+    .route-head { flex-wrap: wrap; }
+    .route-cols { grid-template-columns: 1fr; gap: 8px; }
+    .route-form input[name="name"] { width: 100%; }
+    .route-table td:first-child { font-weight: 600; }
+    /* Шаг маршрута: подпись над полем, поля во всю ширину; галочка и кнопки — в строку */
+    table.route-table td { flex-direction: column; align-items: stretch; gap: 4px; text-align: left; }
+    table.route-table td::before { max-width: none; }
+    table.route-table td input:not([type="checkbox"]), table.route-table td select { max-width: none; width: 100% !important; box-sizing: border-box; }
+    table.route-table td:first-child, table.route-table td:has(> input[type="checkbox"]), table.route-table td:has(> label > input[type="checkbox"]) { flex-direction: row; justify-content: space-between; align-items: center; }
+    table.route-table td:last-child:not([data-label]) { flex-direction: row; justify-content: flex-end; gap: 8px; }
+    table.route-table td:last-child:not([data-label]) button { min-width: 44px; }
+    table.route-table td[colspan] { display: block; text-align: left; }
+    .actions { flex-direction: column; align-items: stretch; }
+    .actions > button { width: 100%; }
+    .acc-head input[name="name"] { width: 100%; box-sizing: border-box; }
+    .acc-actions { margin-left: 0; width: 100%; }
+    .acc-actions button { flex: 1; }
+    .acc-members { grid-template-columns: 1fr; }
+    .acc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .picker { grid-template-columns: 1fr; }
+    .picker ul { max-height: 240px; }
+    .picker-popup { padding: 10px; }
+
+    /* Гид */
+    .kb-tour-pop { width: auto; left: 12px !important; right: 12px; max-width: none; }
+    .kb-tour-pop.is-center { transform: none; }
+}

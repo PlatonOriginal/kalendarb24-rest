@@ -77,15 +77,20 @@ window.Kb24Calendar = (function () {
         }).join('');
         var sample = '#64748b';
 
-        return '<div class="kb-legend">'
+        // На телефоне обозначения свёрнуты, чтобы календарь был виден без прокрутки
+        return '<details class="kb-legend-box"' + (narrow() ? '' : ' open') + '><summary>Обозначения</summary><div class="kb-legend">'
             + '<div><b>Вид отсутствия</b><ul>' + types + '</ul></div>'
             + '<div><b>Статус заявки</b><ul>'
             + '<li><i class="st-pending" style="--c:' + sample + '"></i>у руководителя</li>'
             + '<li><i class="st-progress" style="--c:' + sample + '"></i>на следующих шагах согласования</li>'
             + '<li><i class="st-approved" style="--c:' + sample + '"></i>утверждено</li>'
             + '<li><i class="kb-legend-full"></i>лимит отдела исчерпан</li>'
-            + '</ul></div></div>';
+            + '</ul></div></div></details>';
     }
+
+    function narrow() { return !!(window.Kb24Mobile && window.Kb24Mobile.isNarrow()); }
+    // Месяц на телефоне: компактная сетка без имён и под ней список отсутствующих по дням
+    function agenda() { return state.view === 'month' && narrow(); }
 
     function render() {
         var departments = ctx.me().calendar.departments;
@@ -240,7 +245,9 @@ window.Kb24Calendar = (function () {
         for (var m = new Date(state.bounds[0]); m <= state.bounds[1]; m = addMonths(m, 1)) {
             html += monthBlock(m, byDay, full);
         }
-        grid.innerHTML = '<div class="kb-months kb-view-' + state.view + '">' + html + '</div>';
+        grid.innerHTML = agenda()
+            ? '<div class="kb-months kb-view-year kb-view-agenda">' + html + '</div>' + agendaList(byDay, full)
+            : '<div class="kb-months kb-view-' + state.view + '">' + html + '</div>';
 
         grid.querySelectorAll('[data-request]').forEach(function (chip) {
             chip.addEventListener('click', function (event) {
@@ -248,7 +255,7 @@ window.Kb24Calendar = (function () {
                 ctx.openCard(+chip.dataset.request);
             });
         });
-        grid.querySelectorAll('.kb-day[data-date]').forEach(function (cell) {
+        grid.querySelectorAll('.kb-day[data-date], .kb-agenda-day[data-date]').forEach(function (cell) {
             cell.addEventListener('click', function () { openDay(cell.dataset.date, full[cell.dataset.date]); });
         });
         BX24.fitWindow();
@@ -263,7 +270,7 @@ window.Kb24Calendar = (function () {
         var first = new Date(month.getFullYear(), month.getMonth(), 1);
         var offset = (first.getDay() + 6) % 7;
         var daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-        var compact = state.view === 'year';
+        var compact = state.view === 'year' || agenda();
 
         var cells = WEEKDAYS.map(function (w, i) {
             return '<div class="kb-weekday' + (i > 4 ? ' is-weekend' : '') + '">' + w + '</div>';
@@ -304,6 +311,40 @@ window.Kb24Calendar = (function () {
             return '<a ' + chipAttrs(r) + ' data-request="' + r.id + '" title="' + esc(title(r)) + '">'
                 + esc(shortName ? full.split(' ')[0] : full) + '</a>';
         }).join('');
+    }
+
+    // Список для телефона: дни, когда кто-то отсутствует, имена целиком. Подряд идущие дни
+    // с одним и тем же составом отсутствующих сливаются в одну строку «9–15», чтобы список не повторялся
+    function agendaList(byDay, full) {
+        var groups = [];
+        var last = null;
+        for (var d = new Date(state.bounds[0]); d <= state.bounds[1]; d = addDays(d, 1)) {
+            var key = ymd(d);
+            var items = byDay[key] || [];
+            var ids = items.map(function (r) { return r.id; }).join(',');
+            if (!items.length) { last = null; continue; }
+            if (last && last.ids === ids && !!full[key] === last.full) {
+                last.to = new Date(d);
+                continue;
+            }
+            last = { ids: ids, from: new Date(d), to: new Date(d), items: items, full: !!full[key] };
+            groups.push(last);
+        }
+        var today = ymd(new Date());
+        var weekday = function (date) { return WEEKDAYS[(date.getDay() + 6) % 7].toLowerCase(); };
+        var rows = groups.map(function (g) {
+            var single = ymd(g.from) === ymd(g.to);
+            var cls = ['kb-agenda-day'];
+            if (single && (g.from.getDay() === 0 || g.from.getDay() === 6)) { cls.push('is-weekend'); }
+            if (g.full) { cls.push('is-full'); }
+            if (ymd(g.from) <= today && today <= ymd(g.to)) { cls.push('is-today'); }
+            return '<li class="' + cls.join(' ') + '" data-date="' + ymd(g.from) + '">'
+                + '<span class="kb-agenda-date"><b>' + g.from.getDate() + (single ? '' : '–' + g.to.getDate()) + '</b>'
+                + weekday(g.from) + (single ? '' : '–' + weekday(g.to)) + '</span>'
+                + '<span class="kb-agenda-chips">' + chips(g.items) + '</span></li>';
+        }).join('');
+        return '<h4 class="kb-agenda-title">Кто отсутствует</h4>'
+            + (rows ? '<ul class="kb-agenda">' + rows + '</ul>' : '<p class="hint">В этом месяце никто из отдела не отсутствует.</p>');
     }
 
     // Годовой вид: день закрашивается целиком, при нескольких отсутствиях делится на полосы
@@ -351,6 +392,12 @@ window.Kb24Calendar = (function () {
             var calendar = ctx.me().calendar;
             var own = calendar.departments.some(function (d) { return d.id === calendar.myDepartment; });
             state.departmentId = own ? calendar.myDepartment : ((calendar.departments[0] || {}).id || 0);
+            // Поворот телефона или смена ширины окна: месяц перерисовывается сеткой с именами или списком по дням
+            if (window.Kb24Mobile) {
+                window.Kb24Mobile.onChange(function () {
+                    if (!document.getElementById('tab-calendar').hidden) { render(); }
+                });
+            }
         },
         show: function () {
             render();

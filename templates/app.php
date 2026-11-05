@@ -3,6 +3,8 @@
 <head>
     <?php /* ?v= по времени изменения файла: после обновления браузер не берёт старый скрипт из кэша */ ?>
     <meta charset="utf-8">
+    <?php /* Мобильное приложение Битрикс24 открывает страницу во встроенном браузере: без viewport она масштабируется как десктопная */ ?>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Отпуска</title>
     <link rel="stylesheet" href="/assets/app.css?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/app.css') ?>">
     <script src="https://api.bitrix24.com/api/v1/"></script>
@@ -115,6 +117,7 @@
 </section>
 
 
+<script src="/assets/mobile.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/mobile.js') ?>"></script>
 <script src="/assets/calendar.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/calendar.js') ?>"></script>
 <script src="/assets/balance.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/balance.js') ?>"></script>
 <script src="/assets/routes.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/routes.js') ?>"></script>
