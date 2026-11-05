@@ -155,7 +155,13 @@
 8. **Портал**: в локальном приложении (или в карточке версии в Маркете) укажите `https://vacation.aplat.by/app` и `https://vacation.aplat.by/install`.
 9. **Проверка**: `curl -I https://vacation.aplat.by/app` отвечает без ошибки сертификата; приложение открывается на портале.
 
-Обновление: `cd ~/vacation && git pull && composer install --no-dev --optimize-autoloader`.
+Обновление вручную: `cd ~/vacation && git pull && composer install --no-dev --optimize-autoloader`.
+
+Автообновление: `bin/deploy.sh` по cron раз в 10 минут забирает новые коммиты из `main` (только перемотка вперёд) и пересобирает автозагрузку; без новых коммитов ничего не делает:
+```
+*/10 * * * * /bin/sh $HOME/aplat.by/vacation/bin/deploy.sh >> $HOME/logs/vacation-deploy.log 2>&1
+```
+Пути к PHP и composer меняются переменными `PHP` и `COMPOSER` (по умолчанию `/usr/local/bin/php` и `~/composer.phar`).
 
 ## Скрипты для Windows
 
