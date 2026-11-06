@@ -13,7 +13,8 @@ use Kb24Rest\Structure\StructureService;
 /**
  * Настраиваемые маршруты согласования, как в коробке. Если ни один маршрут не подходит, работает маршрут
  * «По умолчанию» (демо: руководитель → роль «Отдел кадров» → роль «Директор»). Он настраивается так же, как остальные, только
- * действует на все виды и отделы, его нельзя выключить или удалить. Пока его не сохраняли, он не хранится в портале.
+ * действует на все виды и отделы. Пока его не сохраняли, он не хранится в портале. Его можно удалить, если есть другие
+ * маршруты согласования: тогда заявка, которой не подошёл ни один маршрут, утверждается сразу.
  * У маршрута есть список «Уведомить о результате»: кому сообщить об утверждении или отмене отсутствия,
  * с подтверждением ознакомления и, если нужно, задачей.
  * Маршрут — одна запись kbroute, шаги в ней одним JSON (в коробке это две таблицы). У шага постоянный id
@@ -152,7 +153,7 @@ final class RouteService
         }
         unset($routes);
         $approve = &$byPurpose[self::PURPOSE_APPROVE];
-        if (!$approve || !$approve[0]['isDefault'])
+        if ((!$approve || !$approve[0]['isDefault']) && !$this->settings?->defaultRouteRemoved($portal))
         {
             array_unshift($approve, $this->builtInDefault($portal));
         }
@@ -329,9 +330,14 @@ final class RouteService
         return $names;
     }
 
-    public function defaultRoute(Portal $portal): array
+    /**
+     * null — маршрут «По умолчанию» удалили.
+     */
+    public function defaultRoute(Portal $portal): ?array
     {
-        return $this->all($portal)[0];
+        $first = $this->all($portal)[0] ?? null;
+
+        return $first !== null && $first['isDefault'] ? $first : null;
     }
 
     /**
@@ -462,42 +468,61 @@ final class RouteService
 
     /**
      * Поданные по маршруту заявки идут дальше по своему снимку шагов.
+     * Маршрут «По умолчанию» удаляется, только если есть другие маршруты согласования; пока его не сохраняли, у него id = 0.
+     * Без него заявка, которой не подошёл ни один маршрут, утверждается сразу.
      */
     public function delete(CurrentUser $user, int $routeId): array
     {
         $this->assertEditor($user);
-        $found = array_values(array_filter([...$this->all($user->portal), ...$this->cancelRoutes($user->portal)], static fn(array $route) => $route['id'] === $routeId && $routeId > 0));
+        $portal = $user->portal;
+        $found = array_values(array_filter(
+            [...$this->all($portal), ...$this->cancelRoutes($portal)],
+            static fn(array $route) => $routeId > 0 ? $route['id'] === $routeId : $route['isDefault'],
+        ));
         if (!$found)
         {
             throw new VacationError('Маршрут не найден');
         }
         if ($found[0]['isDefault'])
         {
-            throw new VacationError('Маршрут «По умолчанию» удалить нельзя: он действует, когда не подошёл ни один другой');
+            if (count($this->all($portal)) < 2)
+            {
+                throw new VacationError('Маршрут «По умолчанию» — единственный маршрут согласования: удалить его можно, когда есть другие');
+            }
+            $this->settings?->setDefaultRouteRemoved($portal);
         }
-        $this->storage->delete($user->portal, Schema::ROUTES, $routeId);
-        unset($this->cache[$user->portal->memberId]);
+        if ($found[0]['id'] > 0)
+        {
+            $this->storage->delete($portal, Schema::ROUTES, $found[0]['id']);
+        }
+        unset($this->cache[$portal->memberId]);
 
         return ['ok' => true];
     }
 
     /**
      * Маршрут для заявки, снимок для kbreq.ROUTE_DATA: самый точный из настроенных, иначе «По умолчанию».
-     * null — у маршрута все шаги выключены.
+     * Только включённые шаги; пустой список — у маршрута все шаги выключены. found = false — не подошёл ни один маршрут,
+     * а «По умолчанию» удалён (у встроенного «По умолчанию», пока его не сохраняли, тоже id = 0). В обоих случаях согласовывать некому, и заявка утверждается сразу.
      *
-     * @return array{id: int, name: string, steps: list<array<string, mixed>>, watchers: list<array<string, mixed>>}|null
+     * @return array{id: int, name: string, steps: list<array<string, mixed>>, watchers: list<array<string, mixed>>, autoApprove: bool, found: bool}
      */
-    public function findFor(Portal $portal, int $departmentId, string $kind): ?array
+    public function findFor(Portal $portal, int $departmentId, string $kind): array
     {
-        $routes = $this->all($portal);
-        $route = RoutePlan::pick(array_slice($routes, 1), $kind, $this->departmentChain($portal, $departmentId)) ?? $routes[0];
+        $default = $this->defaultRoute($portal);
+        $others = array_values(array_filter($this->all($portal), static fn(array $route) => !$route['isDefault']));
+        $route = RoutePlan::pick($others, $kind, $this->departmentChain($portal, $departmentId)) ?? $default;
+        if ($route === null)
+        {
+            return ['id' => 0, 'name' => '', 'steps' => [], 'watchers' => [], 'autoApprove' => false, 'found' => false];
+        }
         if ($route['autoApprove'])
         {
-            return ['id' => $route['id'], 'name' => $route['name'], 'steps' => [], 'watchers' => $route['watchers'], 'autoApprove' => true];
+            return ['id' => $route['id'], 'name' => $route['name'], 'steps' => [], 'watchers' => $route['watchers'], 'autoApprove' => true, 'found' => true];
         }
         $steps = array_values(array_filter($route['steps'], static fn(array $step) => $step['active']));
 
-        return $steps ? ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers'], 'autoApprove' => false] : null;
+        return ['id' => $route['id'], 'name' => $route['name'], 'steps' => $steps, 'watchers' => $route['watchers'], 'autoApprove' => false, 'found' => true];
     }
 
     /**

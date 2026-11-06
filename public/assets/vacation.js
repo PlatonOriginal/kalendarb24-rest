@@ -256,7 +256,11 @@
             }
             if (h.action === 'cancel_immediate') {
                 return '<li>Отсутствие отменено без согласования: ' + (h.reason === 'self'
-                    ? 'в маршруте отзыва согласовать может только сам сотрудник' : 'нет подходящего маршрута отзыва') + '</li>';
+                    ? 'согласующих нет, кроме самого сотрудника' : 'нет подходящего маршрута отзыва') + '</li>';
+            }
+            if (h.action === 'approve_immediate') {
+                return '<li>Согласующих нет: утверждено сразу' + (h.reason === 'no_route'
+                    ? ' (не подошёл ни один маршрут)' : '') + '</li>';
             }
             return '<li>' + esc(name(h.actorId)) + ' ' + esc(ACTION[h.action] || h.action)
                 + (h.stepName ? ' на шаге «' + esc(h.stepName) + '»' : '') + esc(reason) + '</li>';
