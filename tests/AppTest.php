@@ -154,15 +154,170 @@ final class AppTest extends TestCase
             ['result' => [['id' => 3, 'placement' => 'REST_APP_URI', 'handler' => 'https://old.example.com/app']]],
             ['result' => ['count' => 1]],
             ['result' => true],
+            ['result' => [
+                ['event' => 'ONAPPUNINSTALL', 'handler' => 'https://old.example.com/event', 'auth_type' => '0', 'offline' => 0],
+                ['event' => 'ONCRMLEADADD', 'handler' => 'https://other.example.com/', 'auth_type' => '0', 'offline' => 0],
+            ]],
+            ['result' => true],
+            ['result' => true],
+            ['result' => true],
         ]]);
 
         $this->request($this->app($http, $store, 'https://new.example.com'), '/app', ['REFRESH_ID' => 'rid']);
 
-        $calls = array_slice($http->requests, -3);
+        $calls = array_slice($http->requests, -7, 3);
         self::assertSame('https://test.bitrix24.ru/rest/placement.unbind.json', $calls[1]['url']);
         self::assertSame('https://old.example.com/app', $calls[1]['params']['HANDLER']);
         self::assertSame('https://test.bitrix24.ru/rest/placement.bind.json', $calls[2]['url']);
         self::assertSame(['REST_APP_URI', 'https://new.example.com/app'], [$calls[2]['params']['PLACEMENT'], $calls[2]['params']['HANDLER']]);
+
+        // События: старый адрес снимаем, ONAPPUPDATE и ONAPPUNINSTALL вешаем на новый
+        $events = array_slice($http->requests, -4);
+        self::assertSame('https://test.bitrix24.ru/rest/event.get.json', $events[0]['url']);
+        self::assertSame('https://test.bitrix24.ru/rest/event.unbind.json', $events[1]['url']);
+        self::assertSame(['ONAPPUNINSTALL', 'https://old.example.com/event'], [$events[1]['params']['event'], $events[1]['params']['handler']]);
+        self::assertSame(['event.bind', 'ONAPPUPDATE', 'https://new.example.com/event'],
+            [basename($events[2]['url'], '.json'), $events[2]['params']['event'], $events[2]['params']['handler']]);
+        self::assertSame(['event.bind', 'ONAPPUNINSTALL', 'https://new.example.com/event'],
+            [basename($events[3]['url'], '.json'), $events[3]['params']['event'], $events[3]['params']['handler']]);
         self::assertSame(App::setupVersion('https://new.example.com'), $store->storageVersion('m1'));
+    }
+
+    public function testBoundEventsAreNotBoundAgain(): void
+    {
+        $store = new MemoryPortalStore();
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'old', 'old-r', time() + 3600, 1));
+        $http = new FakeTransport([[
+            'access_token' => 'new', 'refresh_token' => 'new-r', 'expires' => time() + 3600,
+            'member_id' => 'm1', 'client_endpoint' => 'https://test.bitrix24.ru/rest/', 'user_id' => 1,
+        ], ...EntityStorageTest::emptyPortalResponses(), ...[
+            ['result' => [['placement' => 'REST_APP_URI', 'handler' => 'https://srv.example.com/app']]],
+            ['result' => [
+                ['event' => 'ONAPPUPDATE', 'handler' => 'https://srv.example.com/event', 'auth_type' => '0', 'offline' => 0],
+                ['event' => 'ONAPPUNINSTALL', 'handler' => 'https://srv.example.com/event', 'auth_type' => '0', 'offline' => 0],
+            ]],
+        ]]);
+
+        $this->request($this->app($http, $store, 'https://srv.example.com'), '/app', ['REFRESH_ID' => 'rid']);
+
+        self::assertSame('https://test.bitrix24.ru/rest/event.get.json', end($http->requests)['url']);
+        self::assertSame(App::setupVersion('https://srv.example.com'), $store->storageVersion('m1'));
+    }
+
+    private function installedPortal(MemoryPortalStore $store, ?string $applicationToken = 'app-token'): void
+    {
+        $store->save(new \Kb24Rest\Portal\Portal(null, 'm1', 'test.bitrix24.ru', 'https://test.bitrix24.ru/rest/', 'a', 'r', time() + 3600, 1));
+        $store->setStorageVersion('m1', 'v');
+        if ($applicationToken !== null)
+        {
+            $store->setApplicationToken('m1', $applicationToken);
+        }
+    }
+
+    private function uninstall(string $applicationToken): array
+    {
+        return [
+            'event' => 'ONAPPUNINSTALL',
+            'data' => ['LANGUAGE_ID' => 'ru', 'CLEAN' => '0'],
+            'ts' => (string)time(),
+            'auth' => [
+                'domain' => 'test.bitrix24.ru',
+                'server_endpoint' => 'https://oauth.bitrix.info/rest/',
+                'client_endpoint' => 'https://test.bitrix24.ru/rest/',
+                'member_id' => 'm1',
+                'application_token' => $applicationToken,
+            ],
+        ];
+    }
+
+    public function testUninstallWithStoredTokenDeletesPortal(): void
+    {
+        $store = new MemoryPortalStore();
+        $this->installedPortal($store);
+        $http = new FakeTransport([]);
+
+        $json = $this->request($this->app($http, $store), '/event', $this->uninstall('app-token'), ['REQUEST_METHOD' => 'POST']);
+
+        self::assertSame(['result' => true], json_decode($json, true));
+        self::assertArrayNotHasKey('m1', $store->portals);
+        self::assertSame([], $store->applicationTokens);
+        self::assertSame([], $http->requests);
+    }
+
+    public function testForgedUninstallKeepsPortalWhileAppStillWorks(): void
+    {
+        $store = new MemoryPortalStore();
+        $this->installedPortal($store);
+        $http = new FakeTransport([['result' => ['ID' => 5, 'INSTALLED' => true]]]);
+
+        $this->request($this->app($http, $store), '/event', $this->uninstall('forged'), ['REQUEST_METHOD' => 'POST']);
+
+        self::assertSame(403, http_response_code());
+        self::assertArrayHasKey('m1', $store->portals);
+        self::assertSame('https://test.bitrix24.ru/rest/app.info.json', $http->requests[0]['url']);
+    }
+
+    public function testUninstallWithoutStoredTokenDeletesPortalWhenAppIsRevoked(): void
+    {
+        $store = new MemoryPortalStore();
+        $this->installedPortal($store, null);
+        $http = new FakeTransport([['error' => 'invalid_token', 'error_description' => 'The access token provided is invalid.']]);
+
+        $this->request($this->app($http, $store), '/event', $this->uninstall('any'), ['REQUEST_METHOD' => 'POST']);
+
+        self::assertArrayNotHasKey('m1', $store->portals);
+    }
+
+    public function testUninstallKeepsPortalOnNetworkError(): void
+    {
+        $store = new MemoryPortalStore();
+        $this->installedPortal($store, null);
+        $http = new FakeTransport([['error' => 'http_error', 'error_description' => 'timeout']]);
+
+        $this->request($this->app($http, $store), '/event', $this->uninstall('any'), ['REQUEST_METHOD' => 'POST']);
+
+        self::assertArrayHasKey('m1', $store->portals);
+    }
+
+    public function testUninstallOfUnknownPortalDoesNothing(): void
+    {
+        $store = new MemoryPortalStore();
+        $http = new FakeTransport([]);
+
+        $json = $this->request($this->app($http, $store), '/event', $this->uninstall('x'), ['REQUEST_METHOD' => 'POST']);
+
+        self::assertSame(['result' => false], json_decode($json, true));
+    }
+
+    public function testAppUpdateStoresNewApplicationTokenAfterCheckingAccessToken(): void
+    {
+        $store = new MemoryPortalStore();
+        $this->installedPortal($store, 'old-token');
+        $http = new FakeTransport([['result' => ['ID' => 5]]]);
+        $post = $this->uninstall('new-token');
+        $post['event'] = 'ONAPPUPDATE';
+        $post['auth']['access_token'] = 'event-access';
+        // Адрес из события не используем
+        $post['auth']['client_endpoint'] = 'https://evil.example.com/rest/';
+
+        $this->request($this->app($http, $store), '/event', $post, ['REQUEST_METHOD' => 'POST']);
+
+        self::assertSame('new-token', $store->applicationToken('m1'));
+        self::assertSame('https://test.bitrix24.ru/rest/app.info.json', $http->requests[0]['url']);
+        self::assertSame('event-access', $http->requests[0]['params']['auth']);
+    }
+
+    public function testAppUpdateWithInvalidAccessTokenIsRejected(): void
+    {
+        $store = new MemoryPortalStore();
+        $this->installedPortal($store, 'old-token');
+        $http = new FakeTransport([['error' => 'invalid_token']]);
+        $post = $this->uninstall('new-token');
+        $post['event'] = 'ONAPPUPDATE';
+        $post['auth']['access_token'] = 'forged';
+
+        $this->request($this->app($http, $store), '/event', $post, ['REQUEST_METHOD' => 'POST']);
+
+        self::assertSame('old-token', $store->applicationToken('m1'));
     }
 }

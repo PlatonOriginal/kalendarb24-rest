@@ -64,9 +64,14 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/access/save       (POST role: JSON {id, name, userIds, departmentIds, tabs, scope}) сохранить роль
  *   /api/access/delete     (POST id) удалить роль
  *   /api/dashboard         (POST year) дашборд за год: доступ к вкладке «Дашборд», отделы по видимости роли
+ * События портала:
+ *   /event      ONAPPUPDATE (сохраняем application_token), ONAPPUNINSTALL (удаляем данные портала с сервера)
  */
 final class App
 {
+    /** События, на которые сервер подписывается в каждом портале */
+    private const EVENTS = ['ONAPPUPDATE', 'ONAPPUNINSTALL'];
+
     /** @var list<\Closure> работа после ответа браузеру */
     private array $tasks = [];
 
@@ -154,6 +159,7 @@ final class App
         {
             match (true) {
                 $path === '/install' => $this->install($post),
+                $path === '/event' && $this->isPost($server) => $this->event($post),
                 $path === '/' || $path === '/app' => $this->openApp($post),
                 $path === '/api/me' => $this->json($this->me($this->currentUser($server))),
                 $path === '/api/storage' => $this->json($this->storageInfo($this->currentAdmin($server))),
@@ -465,17 +471,18 @@ final class App
             $this->storage->ensure($portal);
             $this->absence?->ensureTypes($portal);
             $this->bindAppUri($portal);
+            $this->bindEvents($portal);
             $this->portals->setStorageVersion($portal->memberId, self::setupVersion($this->appUrl));
         }
     }
 
     /**
-     * Версия того, что сервер настраивает в портале: хранилища и обработчик ссылок REST_APP_URI.
+     * Версия того, что сервер настраивает в портале: хранилища, обработчик ссылок REST_APP_URI и события.
      * Адрес туннеля входит в версию: после его смены обработчик перерегистрируется при следующем открытии.
      */
     public static function setupVersion(string $appUrl): string
     {
-        return substr(sha1(Schema::version() . '|' . $appUrl . '|REST_APP_URI'), 0, 12);
+        return substr(sha1(Schema::version() . '|' . $appUrl . '|REST_APP_URI|' . implode(',', self::EVENTS)), 0, 12);
     }
 
     /**
@@ -510,6 +517,139 @@ final class App
         {
             // Без обработчика приложение работает, только ссылки из уведомлений не откроют карточку
             error_log('kb24 placement: ' . $e->errorCode . ' ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Обработчики событий приложения. Портал снимает их при удалении приложения и сохраняет при обновлении.
+     * https://apidocs.bitrix24.ru/api-reference/events/event-bind.html
+     */
+    private function bindEvents(Portal $portal): void
+    {
+        if ($this->appUrl === '')
+        {
+            return;
+        }
+        $handler = $this->appUrl . '/event';
+        try
+        {
+            $bound = [];
+            foreach ((array)$this->rest->call($portal, 'event.get') as $item)
+            {
+                $event = strtoupper((string)($item['event'] ?? ''));
+                if (!in_array($event, self::EVENTS, true))
+                {
+                    continue;
+                }
+                if (($item['handler'] ?? '') === $handler)
+                {
+                    $bound[$event] = true;
+                    continue;
+                }
+                // Старый адрес сервера (туннель сменился): события туда больше не нужны
+                $this->rest->call($portal, 'event.unbind', ['event' => $event, 'handler' => $item['handler']]);
+            }
+            foreach (self::EVENTS as $event)
+            {
+                if (!isset($bound[$event]))
+                {
+                    $this->rest->call($portal, 'event.bind', ['event' => $event, 'handler' => $handler]);
+                }
+            }
+        }
+        catch (RestException $e)
+        {
+            // Без обработчика приложение работает, только данные портала не удалятся с сервера сами
+            error_log('kb24 event.bind: ' . $e->errorCode . ' ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * События портала приходят формой: event, data[...], auth[...].
+     * Подлинность проверяем по application_token: в ONAPPUNINSTALL токенов доступа нет, приложение уже удалено.
+     * https://apidocs.bitrix24.ru/api-reference/events/safe-event-handlers.html
+     */
+    private function event(array $post): void
+    {
+        $event = strtoupper((string)($post['event'] ?? ''));
+        $auth = is_array($post['auth'] ?? null) ? $post['auth'] : [];
+        $memberId = (string)($auth['member_id'] ?? '');
+        $token = (string)($auth['application_token'] ?? '');
+        $portal = $memberId !== '' ? $this->portals->findByMemberId($memberId) : null;
+        if ($portal === null || $token === '')
+        {
+            // Портала у нас нет (уже удалён или чужой запрос): хранить нечего
+            $this->json(['result' => false]);
+            return;
+        }
+
+        match ($event)
+        {
+            'ONAPPUPDATE' => $this->onAppUpdate($portal, $token, (string)($auth['access_token'] ?? '')),
+            'ONAPPUNINSTALL' => $this->onAppUninstall($portal, $token),
+            default => $this->json(['result' => false]),
+        };
+    }
+
+    /**
+     * После обновления портал присылает новый application_token. Запрос подлинный, если пришедший
+     * токен доступа работает на адресе портала из нашей БД (а не из запроса).
+     */
+    private function onAppUpdate(Portal $portal, string $applicationToken, string $accessToken): void
+    {
+        if ($accessToken === '')
+        {
+            $this->json(['error' => 'forbidden'], 403);
+            return;
+        }
+        try
+        {
+            $this->rest->callAsUser($portal, $accessToken, 'app.info');
+        }
+        catch (RestException)
+        {
+            $this->json(['error' => 'forbidden'], 403);
+            return;
+        }
+        $this->portals->setApplicationToken($portal->memberId, $applicationToken);
+        $this->json(['result' => true]);
+    }
+
+    /**
+     * Приложение удалено с портала: стираем его адрес, токены и кэш сессий. Данные отпусков хранятся
+     * в самом портале (entity.*), их портал удаляет сам, если администратор отметил очистку.
+     */
+    private function onAppUninstall(Portal $portal, string $applicationToken): void
+    {
+        $stored = $this->portals->applicationToken($portal->memberId);
+        $genuine = $stored !== null && hash_equals($stored, $applicationToken);
+        // Токена нет, если портал ещё не присылал ONAPPUPDATE, или он устарел. Тогда проверяем,
+        // что портал действительно отозвал права приложения; если приложение отвечает, запрос не от портала
+        if (!$genuine && !$this->appRevoked($portal))
+        {
+            $this->json(['error' => 'forbidden'], 403);
+            return;
+        }
+
+        $this->portals->delete($portal->memberId);
+        $this->json(['result' => true]);
+    }
+
+    /**
+     * При удалении портал отзывает права приложения, поэтому вызов с сохранёнными токенами получает ошибку.
+     * Ошибку сети за удаление не считаем.
+     */
+    private function appRevoked(Portal $portal): bool
+    {
+        try
+        {
+            $this->rest->call($portal, 'app.info');
+
+            return false;
+        }
+        catch (RestException $e)
+        {
+            return $e->errorCode !== 'http_error';
         }
     }
 

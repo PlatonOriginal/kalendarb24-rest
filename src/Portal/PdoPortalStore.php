@@ -67,4 +67,34 @@ final class PdoPortalStore implements PortalStore
     {
         return array_map('strval', $this->pdo->query('SELECT member_id FROM portal ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
     }
+
+    public function applicationToken(string $memberId): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT application_token FROM portal WHERE member_id = ?');
+        $stmt->execute([$memberId]);
+        $token = $stmt->fetchColumn();
+
+        return is_string($token) && $token !== '' ? $token : null;
+    }
+
+    public function setApplicationToken(string $memberId, string $token): void
+    {
+        $this->pdo->prepare('UPDATE portal SET application_token = ? WHERE member_id = ?')->execute([$token, $memberId]);
+    }
+
+    public function delete(string $memberId): void
+    {
+        $this->pdo->beginTransaction();
+        try
+        {
+            $this->pdo->prepare('DELETE s FROM user_session s JOIN portal p ON p.id = s.portal_id WHERE p.member_id = ?')->execute([$memberId]);
+            $this->pdo->prepare('DELETE FROM portal WHERE member_id = ?')->execute([$memberId]);
+            $this->pdo->commit();
+        }
+        catch (\Throwable $e)
+        {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+    }
 }
