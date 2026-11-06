@@ -12,7 +12,7 @@ final class Analytics
     public const REST_PLANNED = 'planned';
     public const REST_NONE = 'none';
 
-    /** Минимальная часть ежегодного отпуска по ст. 125 ТК РФ. */
+    /** Минимальная часть ежегодного отпуска: ст. 125 ТК РФ, ч. 1 ст. 174 ТК РБ (подпись — LaborCode). */
     public const LONG_PART_DAYS = 14;
 
     private const REVIEW_STATUSES = ['head_review', 'hr_review', 'final_approval', 'route_review'];

@@ -178,7 +178,7 @@ window.Kb24Dashboard = (function () {
         var tiles = ['rested', 'planned', 'none', 'short'].map(function (key) {
             var count = groups[key].length;
             var note = key === 'short'
-                ? 'из тех, у кого есть отпуск в году (ст. 125 ТК РФ)'
+                ? 'из тех, у кого есть отпуск в году' + (view.data.longPartArticle ? ' (' + view.data.longPartArticle + ')' : '')
                 : percent(count, list.length) + ' сотрудников';
             return '<button type="button" class="kb-tile' + (key === 'none' && count ? ' is-attention' : '') + (view.group === key ? ' is-active' : '')
                 + '" data-group="' + key + '"' + (count ? '' : ' disabled') + '>'

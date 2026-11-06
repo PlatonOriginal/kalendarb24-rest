@@ -52,6 +52,9 @@ final class FakePortal implements HttpTransport
     /** @var array<int, list<array<string, mixed>>> календари сотрудников (calendar.section.get) по ID владельца */
     public array $sections = [];
 
+    /** Тариф с префиксом региона, который вернёт app.info; null — портал ответит ошибкой */
+    public ?string $license = 'ru_std';
+
     /** @var array<string, mixed> app.option */
     public array $options = [];
 
@@ -113,6 +116,7 @@ final class FakePortal implements HttpTransport
             'calendar.section.get' => ['result' => $this->sections[(int)$params['ownerId']] ?? []],
             'calendar.section.add' => ['result' => $this->addSection((int)$params['ownerId'], (string)$params['name'])],
             'calendar.event.delete' => ['result' => (bool)array_push($this->deletedEvents, (int)$params['id'])],
+            'app.info' => $this->license === null ? ['error' => 'ACCESS_DENIED', 'error_description' => 'Нет доступа'] : ['result' => ['LICENSE' => $this->license]],
             'app.option.get' => ['result' => $this->options],
             'app.option.set' => ['result' => (bool)($this->options = (array)$params['options'] + $this->options)],
             'placement.get' => ['result' => $this->placements],
