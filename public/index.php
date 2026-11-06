@@ -7,6 +7,7 @@ use Kb24Rest\Bitrix24\RestClient;
 use Kb24Rest\Config;
 use Kb24Rest\Db;
 use Kb24Rest\Http\App;
+use Kb24Rest\Log\PdoRestLog;
 use Kb24Rest\Portal\PdoPortalStore;
 use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
@@ -32,8 +33,10 @@ Db::migrate($pdo, dirname(__DIR__) . '/migrations');
 
 $http = new CurlTransport();
 $portals = new PdoPortalStore($pdo);
-$oauth = new OAuthClient($http, $config->clientId, $config->clientSecret);
-$rest = new RestClient($http, $oauth, $portals);
+// Журнал запросов к REST хранится 3 суток: устаревшие записи удаляются после ответа браузеру
+$restLog = new PdoRestLog($pdo);
+$oauth = new OAuthClient($http, $config->clientId, $config->clientSecret, $restLog);
+$rest = new RestClient($http, $oauth, $portals, $restLog);
 
 $structure = new StructureService($rest);
 $storage = new EntityStorage($rest);
@@ -50,5 +53,5 @@ $requests = new RequestService($storage, $structure, $roles, new WorkCalendar($r
 $calendar = new CalendarService($structure, $roles, $limits, $settings);
 
 $dashboard = new DashboardService($storage, $structure, $roles, $balances);
-$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $watch, $notifier], $settings, $calendar, $limits, $balances, $routes, $dashboard, $absence);
+$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $watch, $notifier, $restLog], $settings, $calendar, $limits, $balances, $routes, $dashboard, $absence);
 $app->handle(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', $_POST, $_SERVER);

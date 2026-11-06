@@ -34,7 +34,7 @@ interface PortalStore
     public function setApplicationToken(string $memberId, string $token): void;
 
     /**
-     * Удаляет портал и кэш сессий его сотрудников (после удаления приложения с портала).
+     * Удаляет портал, кэш сессий его сотрудников и журнал его запросов к REST (после удаления приложения с портала).
      */
     public function delete(string $memberId): void;
 }

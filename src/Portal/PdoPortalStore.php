@@ -87,6 +87,7 @@ final class PdoPortalStore implements PortalStore
         $this->pdo->beginTransaction();
         try
         {
+            $this->pdo->prepare('DELETE FROM rest_log WHERE member_id = ?')->execute([$memberId]);
             $this->pdo->prepare('DELETE s FROM user_session s JOIN portal p ON p.id = s.portal_id WHERE p.member_id = ?')->execute([$memberId]);
             $this->pdo->prepare('DELETE FROM portal WHERE member_id = ?')->execute([$memberId]);
             $this->pdo->commit();

@@ -81,4 +81,87 @@ final class RestClientTest extends TestCase
         $this->expectExceptionMessage('ACCESS_DENIED');
         $client->call($this->portal(time() + 3600), 'calendar.event.add');
     }
+
+    public function testLogsEachCallWithoutParamsAndTokens(): void
+    {
+        $http = new FakeTransport([
+            ['error' => 'expired_token'],
+            $this->tokens(),
+            ['result' => true],
+            ['error' => 'ACCESS_DENIED'],
+        ]);
+        $log = new MemoryRestLog();
+        $client = new RestClient($http, new OAuthClient($http, 'id', 'secret', $log), new MemoryPortalStore(), $log);
+
+        $client->call($this->portal(time() + 3600), 'user.admin', ['ID' => 5]);
+        try
+        {
+            $client->callAsUser($this->portal(time() + 3600), 'user-token', 'app.info');
+        }
+        catch (RestException)
+        {
+        }
+
+        self::assertSame([
+            ['memberId' => 'member1', 'method' => 'user.admin', 'auth' => 'app', 'status' => 200, 'error' => 'expired_token'],
+            ['memberId' => 'member1', 'method' => 'oauth.token', 'auth' => 'app', 'status' => 200, 'error' => ''],
+            ['memberId' => 'member1', 'method' => 'user.admin', 'auth' => 'app', 'status' => 200, 'error' => ''],
+            ['memberId' => 'member1', 'method' => 'app.info', 'auth' => 'user', 'status' => 200, 'error' => 'ACCESS_DENIED'],
+        ], $log->entries);
+        $logged = json_encode($log->entries);
+        foreach (['old-access', 'new-access', 'old-refresh', 'new-refresh', 'user-token', 'secret'] as $secret)
+        {
+            self::assertStringNotContainsString($secret, $logged);
+        }
+    }
+
+    public function testLogsRestV3ErrorCode(): void
+    {
+        $http = new FakeTransport([['error' => ['code' => 'BITRIX_REST_V3_EXCEPTION', 'message' => 'x']]]);
+        $log = new MemoryRestLog();
+        $client = new RestClient($http, new OAuthClient($http, 'id', 'secret'), new MemoryPortalStore(), $log);
+
+        try
+        {
+            $client->callV3($this->portal(time() + 3600), 'humanresources.department.list');
+        }
+        catch (RestException)
+        {
+        }
+
+        self::assertSame('humanresources.department.list', $log->entries[0]['method']);
+        self::assertSame('BITRIX_REST_V3_EXCEPTION', $log->entries[0]['error']);
+    }
+
+    public function testLogsNetworkFailureWithZeroStatus(): void
+    {
+        $http = new class implements \Kb24Rest\Bitrix24\HttpTransport {
+            public function post(string $url, array $params): array
+            {
+                throw new RestException('http_error', 'timeout');
+            }
+
+            public function postJson(string $url, array $params): array
+            {
+                throw new RestException('http_error', 'timeout');
+            }
+
+            public function get(string $url, array $query): array
+            {
+                throw new RestException('http_error', 'timeout');
+            }
+        };
+        $log = new MemoryRestLog();
+        $client = new RestClient($http, new OAuthClient($http, 'id', 'secret', $log), new MemoryPortalStore(), $log);
+
+        try
+        {
+            $client->call($this->portal(time() + 10), 'app.info');
+        }
+        catch (RestException)
+        {
+        }
+
+        self::assertSame([['memberId' => '', 'method' => 'oauth.token', 'auth' => 'app', 'status' => 0, 'error' => 'http_error']], $log->entries);
+    }
 }
