@@ -40,4 +40,22 @@ final class MemoryPortalStore implements PortalStore
     {
         return array_keys($this->portals);
     }
+
+    /** @var array<string, string> */
+    public array $applicationTokens = [];
+
+    public function applicationToken(string $memberId): ?string
+    {
+        return $this->applicationTokens[$memberId] ?? null;
+    }
+
+    public function setApplicationToken(string $memberId, string $token): void
+    {
+        $this->applicationTokens[$memberId] = $token;
+    }
+
+    public function delete(string $memberId): void
+    {
+        unset($this->portals[$memberId], $this->storageVersions[$memberId], $this->applicationTokens[$memberId]);
+    }
 }

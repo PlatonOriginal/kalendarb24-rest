@@ -25,4 +25,16 @@ interface PortalStore
      * @return list<string>
      */
     public function memberIds(): array;
+
+    /**
+     * application_token из событий портала (ONAPPUPDATE): по нему проверяем, что событие прислал Битрикс24.
+     */
+    public function applicationToken(string $memberId): ?string;
+
+    public function setApplicationToken(string $memberId, string $token): void;
+
+    /**
+     * Удаляет портал и кэш сессий его сотрудников (после удаления приложения с портала).
+     */
+    public function delete(string $memberId): void;
 }
