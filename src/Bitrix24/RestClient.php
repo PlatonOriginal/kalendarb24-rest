@@ -3,12 +3,15 @@ declare(strict_types=1);
 
 namespace Kb24Rest\Bitrix24;
 
+use Kb24Rest\Log\NullRestLog;
+use Kb24Rest\Log\RestLog;
 use Kb24Rest\Portal\Portal;
 use Kb24Rest\Portal\PortalStore;
 
 /**
  * Вызовы REST от имени приложения (токен администратора, установившего приложение).
  * Истёкший токен обновляется один раз, новые токены сохраняются.
+ * Каждый вызов попадает в журнал RestLog: метод, портал, код ответа и время, без параметров и токенов.
  */
 final class RestClient
 {
@@ -19,6 +22,7 @@ final class RestClient
         private readonly HttpTransport $http,
         private readonly OAuthClient $oauth,
         private readonly PortalStore $portals,
+        private readonly RestLog $log = new NullRestLog(),
     ) {
     }
 
@@ -91,7 +95,8 @@ final class RestClient
             $portal = $this->refresh($portal);
         }
         $url = preg_replace('~/rest/$~', '/rest/api/', $portal->clientEndpoint) . $method;
-        $body = $this->http->postJson($url, $params + ['auth' => $portal->accessToken])['body'];
+        $body = $this->send($portal->memberId, $method, RestLog::AUTH_APP,
+            fn() => $this->http->postJson($url, $params + ['auth' => $portal->accessToken]));
         if (isset($body['error']))
         {
             throw RestException::fromBody($body);
@@ -107,7 +112,8 @@ final class RestClient
      */
     public function callAsUser(Portal $portal, string $userToken, string $method, array $params = []): mixed
     {
-        $body = $this->http->post($portal->clientEndpoint . $method . '.json', $params + ['auth' => $userToken])['body'];
+        $body = $this->send($portal->memberId, $method, RestLog::AUTH_USER,
+            fn() => $this->http->post($portal->clientEndpoint . $method . '.json', $params + ['auth' => $userToken]));
         if (isset($body['error']))
         {
             throw RestException::fromBody($body);
@@ -118,7 +124,51 @@ final class RestClient
 
     private function post(Portal $portal, string $method, array $params): array
     {
-        return $this->http->post($portal->clientEndpoint . $method . '.json', $params + ['auth' => $portal->accessToken])['body'];
+        return $this->send($portal->memberId, $method, RestLog::AUTH_APP,
+            fn() => $this->http->post($portal->clientEndpoint . $method . '.json', $params + ['auth' => $portal->accessToken]));
+    }
+
+    /**
+     * Выполняет запрос и пишет его в журнал. Ошибка сети тоже попадает в журнал (код ответа 0).
+     *
+     * @param \Closure(): array{status: int, body: array<string, mixed>} $request
+     * @return array<string, mixed> тело ответа
+     */
+    private function send(string $memberId, string $method, string $authType, \Closure $request): array
+    {
+        $started = hrtime(true);
+        try
+        {
+            $response = $request();
+        }
+        catch (RestException $e)
+        {
+            $this->log->record($memberId, $method, $authType, 0, $e->errorCode, self::elapsedMs($started));
+            throw $e;
+        }
+        $this->log->record($memberId, $method, $authType, $response['status'], self::errorCode($response['body']), self::elapsedMs($started));
+
+        return $response['body'];
+    }
+
+    /**
+     * Код ошибки из ответа: в классическом REST строка, в REST 3.0 объект с полем code.
+     *
+     * @param array<string, mixed> $body
+     */
+    public static function errorCode(array $body): string
+    {
+        if (!isset($body['error']))
+        {
+            return '';
+        }
+
+        return is_array($body['error']) ? (string)($body['error']['code'] ?? 'unknown_error') : (string)$body['error'];
+    }
+
+    public static function elapsedMs(int $startedNs): int
+    {
+        return intdiv(hrtime(true) - $startedNs, 1_000_000);
     }
 
     private function refresh(Portal $portal): Portal
