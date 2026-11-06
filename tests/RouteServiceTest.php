@@ -193,7 +193,7 @@ final class RouteServiceTest extends TestCase
         self::assertSame(Status::APPROVED, $this->approve($own['approverId'], $own['id'])['status']);
     }
 
-    public function testDefaultRouteIsEditableButNotRemovable(): void
+    public function testDefaultRouteIsEditableAndRemovableWhenNotTheOnlyOne(): void
     {
         $default = $this->routes->all($this->portal)[0];
         self::assertTrue($default['isDefault']);
@@ -204,9 +204,71 @@ final class RouteServiceTest extends TestCase
         $saved = $this->routes->all($this->portal)[0];
         self::assertSame([true, [], 3], [$saved['isDefault'], $saved['kinds'], $saved['steps'][0]['submitDays']]);
         self::assertCount(1, $this->routes->all($this->portal));
+        try
+        {
+            $this->routes->delete($this->admin(), $saved['id']);
+            self::fail('Удалён единственный маршрут');
+        }
+        catch (VacationError $e)
+        {
+            self::assertStringContainsString('единственный маршрут согласования', $e->getMessage());
+        }
 
-        $this->expectExceptionMessage('Маршрут «По умолчанию» удалить нельзя');
+        $this->saveRoute(['name' => 'Продажи', 'departmentIds' => [5], 'steps' => [$this->step('Директор', 'director')]]);
         $this->routes->delete($this->admin(), $saved['id']);
+        $this->rebuild();
+        self::assertSame(['Продажи'], array_column($this->routes->all($this->portal), 'name'), 'встроенный «По умолчанию» не возвращается');
+
+        // Маршрут не подошёл: заявка утверждается сразу
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        self::assertSame([Status::APPROVED, 0], [$request['status'], $request['approverId']]);
+        $card = $this->service->card($this->user(self::ACCOUNTANT), $request['id']);
+        self::assertSame(['create', 'approve_immediate'], array_column($card['history'], 'action'));
+        self::assertSame('no_route', $card['history'][1]['reason']);
+        self::assertNull($card['route']);
+    }
+
+    public function testBuiltInDefaultRouteIsRemovedWithoutSaving(): void
+    {
+        $this->saveRoute(['name' => 'Продажи', 'departmentIds' => [5], 'steps' => [$this->step('Директор', 'director')]]);
+        $this->routes->delete($this->admin(), 0);
+        $this->rebuild();
+
+        self::assertNull($this->routes->defaultRoute($this->portal));
+        self::assertFalse($this->routes->findFor($this->portal, 14, 'vacation')['found']);
+        self::assertSame('Продажи', $this->routes->findFor($this->portal, 5, 'vacation')['name']);
+    }
+
+    public function testDirectorWhoIsTheOnlyApproverGetsApprovedAtOnce(): void
+    {
+        $this->saveRoute(['name' => 'Директор', 'steps' => [$this->step('Директор', 'director'), $this->step('Ещё раз', 'user', ['userId' => self::DIRECTOR])]]);
+
+        $request = $this->service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-09', '2026-11-13');
+
+        self::assertSame(Status::APPROVED, $request['status']);
+        $card = $this->service->card($this->user(self::DIRECTOR), $request['id']);
+        self::assertSame(['create', 'approve_immediate'], array_column($card['history'], 'action'));
+        self::assertSame('no_approvers', $card['history'][1]['reason']);
+        self::assertSame(['skipped', 'skipped'], array_column($card['route']['steps'], 'state'));
+    }
+
+    public function testStepFallingBackToAuthorIsSkipped(): void
+    {
+        // Директор без руководителя, в роли «Отдел кадров» только он сам: шаг «Руководитель» уйти некому, кроме него
+        $this->roles->set($this->portal, RoleService::HR, [self::DIRECTOR]);
+        $this->rebuild();
+        $this->saveRoute(['steps' => [$this->step('Руководитель', 'head'), $this->step('Юрист', 'user', ['userId' => self::LAWYER])]]);
+
+        $request = $this->service->create($this->user(self::DIRECTOR), 'vacation', '2026-11-09', '2026-11-13');
+        self::assertSame([self::LAWYER, 'Юрист'], [$request['approverId'], $request['stepName']]);
+    }
+
+    public function testRouteWithAllStepsOffApprovesAtOnce(): void
+    {
+        $this->saveRoute(['departmentIds' => [14], 'steps' => [$this->step('Руководитель', 'head', ['active' => false])]]);
+
+        $request = $this->service->create($this->user(self::ACCOUNTANT), 'vacation', '2026-11-09', '2026-11-13');
+        self::assertSame(Status::APPROVED, $request['status']);
     }
 
     public function testSubmitDeadlineComesFromRouteOrSettings(): void

@@ -84,15 +84,11 @@ final class RequestService
         }
         // Без сервиса маршрутов (старые тесты) — прежняя цепочка по умолчанию со статусами head_review и т. д.
         $plan = $this->routes?->findFor($portal, $departmentId, $kind);
-        if ($this->routes !== null && $plan === null)
-        {
-            throw new VacationError('У подходящего маршрута выключены все шаги: проверьте вкладку «Маршруты»');
-        }
         $minDays = $plan !== null ? RoutePlan::minSubmitDays($plan['steps']) : ($this->settings?->minSubmitDays($portal) ?? 0);
         $exempt = $type['backdated'] || (!$type['paid'] && ($this->settings?->minSubmitExemptUnpaid($portal) ?? false));
         if (!$exempt && $range->from < $this->today->modify("+{$minDays} days"))
         {
-            throw new VacationError(($plan !== null ? 'По маршруту «' . $plan['name'] . '» з' : 'З') . "аявку нужно подать не позже чем за {$minDays} дн. до начала");
+            throw new VacationError(($plan !== null && $plan['found'] ? 'По маршруту «' . $plan['name'] . '» з' : 'З') . "аявку нужно подать не позже чем за {$minDays} дн. до начала");
         }
         foreach ($this->findRequests($portal, ['PROPERTY_USER_ID' => $authorId]) as $existing)
         {
@@ -150,8 +146,9 @@ final class RequestService
         $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $authorId, $departmentId, $this->allowSelfApproval ? [] : [$authorId]) : null;
         if ($plan !== null && $step === null)
         {
-            // Например, директор подаёт заявку, а в маршруте согласует только директор
-            throw new VacationError('Заявку некому согласовать: на всех шагах маршрута «' . $plan['name'] . '» согласующий — вы сами. Добавьте в маршрут другой шаг');
+            // Как в коробке: маршрут не подошёл (а «По умолчанию» удалён), у него выключены все шаги
+            // или согласовать может только сам автор (например, директор подаёт заявку, а в маршруте согласует только директор)
+            return $this->createApproved($user, $kind, $values, $plan, $plan['found'] ? 'no_approvers' : 'no_route');
         }
         if ($step !== null)
         {
@@ -185,19 +182,25 @@ final class RequestService
     }
 
     /**
-     * Маршрут «Утверждать сразу» (по умолчанию у больничного): заявка утверждается при подаче, получатели маршрута уведомляются.
+     * Заявка утверждается при подаче, получатели маршрута уведомляются: маршрут «Утверждать сразу» (по умолчанию у больничного)
+     * или согласовывать некому ($why: no_route — не подошёл ни один маршрут, no_approvers — на всех шагах никого, кроме автора,
+     * или все шаги выключены). Во втором случае в истории запись «Согласующих нет: утверждено сразу», шаги видны пропущенными.
      */
-    private function createApproved(CurrentUser $user, string $kind, array $values, array $plan): array
+    private function createApproved(CurrentUser $user, string $kind, array $values, array $plan, string $why = ''): array
     {
         $portal = $user->portal;
         $id = $this->storage->add($portal, Schema::REQUESTS, $kind, $values + [
             'STATUS' => Status::APPROVED,
             'APPROVER_ID' => 0,
             'ROUTE_ID' => $plan['id'],
-            'ROUTE_DATA' => json_encode(['id' => $plan['id'], 'name' => $plan['name'], 'steps' => []], JSON_UNESCAPED_UNICODE),
+            'ROUTE_DATA' => !($plan['found'] ?? true) ? '' : json_encode(['id' => $plan['id'], 'name' => $plan['name'], 'steps' => $why !== '' ? $plan['steps'] : []], JSON_UNESCAPED_UNICODE),
             'WATCHERS' => json_encode($plan['watchers'] ?? [], JSON_UNESCAPED_UNICODE),
         ]);
         $this->log($portal, $id, $user->userId, 'create', null, Status::APPROVED);
+        if ($why !== '')
+        {
+            $this->log($portal, $id, $user->userId, 'approve_immediate', null, Status::APPROVED, $why);
+        }
         $request = $this->load($portal, $id);
         $this->absence?->add($portal, $request);
         if ($values['FILED_BY'])
@@ -334,7 +337,7 @@ final class RequestService
 
         $plan = $this->routes->findCancelFor($portal, $request['deptId'], $request['kind']);
         $skip = $this->allowSelfApproval ? [] : [$request['userId']];
-        $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $request['userId'], $request['deptId'], $skip, true) : null;
+        $step = $plan !== null ? $this->nextRouteStep($portal, $plan, 0, $request['userId'], $request['deptId'], $skip) : null;
         $this->storage->update($portal, Schema::REQUESTS, $id, [
             'STATUS' => Status::CANCELLING,
             'APPROVER_ID' => $step['approverId'] ?? 0,
@@ -411,7 +414,7 @@ final class RequestService
         $number = $request['cancelIndex'] + 1;
         $approvedBy = [...$this->cancelApprovedBy($portal, $id), $user->userId];
         $skip = $this->allowSelfApproval ? $approvedBy : [$request['userId'], ...$approvedBy];
-        $next = $this->nextRouteStep($portal, $plan, $number, $request['userId'], $request['deptId'], $skip, true);
+        $next = $this->nextRouteStep($portal, $plan, $number, $request['userId'], $request['deptId'], $skip);
         if ($next === null)
         {
             $this->log($portal, $id, $user->userId, 'cancel_approve', Status::CANCELLING, Status::CANCELLED, '', $number);
@@ -1013,34 +1016,36 @@ final class RequestService
     /**
      * Следующий шаг маршрута с согласующим, начиная с $from. Выключенные сейчас шаги пропускаются и в поданных раньше заявках.
      * Если на шаге никого не нашлось (у отдела нет руководителя, не выбран директор), заявка уходит в отдел кадров,
-     * чтобы не зависнуть и не пройти без проверки.
+     * чтобы не зависнуть и не пройти без проверки. Если и так согласовать может только сам автор (например, директор
+     * без руководителя, а в роли «Отдел кадров» никого, кроме него), шаг засчитывается, как шаг, где согласующий — автор.
      *
      * @param list<int> $skip автор и те, кто уже согласовал: их шаги засчитываются сами
      * @return array{index: int, approverId: int, rerouted: bool}|null null — шагов больше нет
      */
-    private function nextRouteStep(Portal $portal, array $plan, int $from, int $userId, int $departmentId, array $skip, bool $cancel = false): ?array
+    private function nextRouteStep(Portal $portal, array $plan, int $from, int $userId, int $departmentId, array $skip): ?array
     {
         $flags = $this->routes?->activeFlags($portal, (int)$plan['id']) ?? [];
         $steps = array_map(
             static fn(array $step) => ['active' => ($step['active'] ?? true) && ($flags[$step['id'] ?? 0] ?? true)] + $step,
             $plan['steps'],
         );
-        $next = RoutePlan::next($steps, $from, $skip, fn(array $step) => $this->stepApprover($portal, $step, $userId, $departmentId, $skip));
-        if ($next === null)
+        while (($next = RoutePlan::next($steps, $from, $skip, fn(array $step) => $this->stepApprover($portal, $step, $userId, $departmentId, $skip))) !== null)
         {
-            return null;
-        }
-        $approverId = $next['approverId'] ?? $this->hrApprover($portal, $userId, $departmentId);
-        if (!$approverId)
-        {
-            throw new VacationError('Не найден согласующий: проверьте структуру компании и состав ролей на вкладке «Доступ»');
-        }
-        if ($approverId === $userId && !$this->allowSelfApproval)
-        {
-            throw new VacationError(($cancel ? 'Отмену' : 'Заявку') . ' некому согласовать, кроме вас самих: проверьте состав ролей на вкладке «Доступ»');
+            $approverId = $next['approverId'] ?? $this->hrApprover($portal, $userId, $departmentId);
+            if (!$approverId)
+            {
+                throw new VacationError('Не найден согласующий: проверьте структуру компании и состав ролей на вкладке «Доступ»');
+            }
+            if ($approverId === $userId && !$this->allowSelfApproval)
+            {
+                $from = $next['index'] + 1;
+                continue;
+            }
+
+            return ['index' => $next['index'], 'approverId' => $approverId, 'rerouted' => $next['approverId'] === null];
         }
 
-        return ['index' => $next['index'], 'approverId' => $approverId, 'rerouted' => $next['approverId'] === null];
+        return null;
     }
 
     /**

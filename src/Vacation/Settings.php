@@ -29,10 +29,12 @@ final class Settings
         'cancel_routes_ready' => 0,
         // Создан демо-маршрут «Больничный» (утверждается сразу)
         'kind_routes_ready' => 0,
+        // Маршрут «По умолчанию» удалён: встроенный демо-маршрут больше не подставляется
+        'default_route_removed' => 0,
     ];
 
     /** Настройки «да или нет»: хранятся как 0 и 1 */
-    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid', 'cancel_routes_ready', 'kind_routes_ready'];
+    public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid', 'cancel_routes_ready', 'kind_routes_ready', 'default_route_removed'];
 
     /** @var array<string, array<string, int>> */
     private array $cache = [];
@@ -151,6 +153,17 @@ final class Settings
     public function setKindRoutesReady(Portal $portal): void
     {
         $this->rest->call($portal, 'app.option.set', ['options' => ['kind_routes_ready' => 1]]);
+        unset($this->cache[$portal->memberId]);
+    }
+
+    public function defaultRouteRemoved(Portal $portal): bool
+    {
+        return $this->all($portal)['default_route_removed'] === 1;
+    }
+
+    public function setDefaultRouteRemoved(Portal $portal): void
+    {
+        $this->rest->call($portal, 'app.option.set', ['options' => ['default_route_removed' => 1]]);
         unset($this->cache[$portal->memberId]);
     }
 }
