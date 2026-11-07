@@ -78,7 +78,7 @@ final class RouteServiceTest extends TestCase
             $storage, $structure, $this->roles, new WorkCalendar($rest), new \DateTimeImmutable('2026-10-27'), $allowSelfApproval,
             $this->notifier, null, $settings, null, null, $this->routes, $this->watch,
         );
-        $this->dashboard = new DashboardService($storage, $structure, $this->roles, null, new \DateTimeImmutable('2026-10-28 10:00:00+03:00'));
+        $this->dashboard = new DashboardService($storage, $structure, $this->roles, null, new \DateTimeImmutable('2026-10-28 10:00:00+03:00'), $rest);
     }
 
     private function user(int $id, bool $isAdmin = false): CurrentUser
@@ -744,6 +744,21 @@ final class RouteServiceTest extends TestCase
         self::assertNull($this->dashboard->build($this->user(40), 2026)['speed']);
         $this->expectExceptionMessage('Нет доступа к вкладке «Дашборд»');
         $this->dashboard->build($this->user(self::SALES_MANAGER), 2026);
+    }
+
+    public function testDashboardLongPartArticleFollowsPortalCountry(): void
+    {
+        self::assertSame('ст. 125 ТК РФ', $this->dashboard->build($this->user(self::DIRECTOR), 2026)['longPartArticle']);
+
+        $this->http->license = 'by_pro100';
+        self::assertSame('ч. 1 ст. 174 ТК РБ', $this->dashboard->build($this->user(self::DIRECTOR), 2026)['longPartArticle']);
+
+        $this->http->license = 'kz_basic';
+        self::assertSame('', $this->dashboard->build($this->user(self::DIRECTOR), 2026)['longPartArticle']);
+
+        // Портал не ответил на app.info: страна по адресу test.bitrix24.ru
+        $this->http->license = null;
+        self::assertSame('ст. 125 ТК РФ', $this->dashboard->build($this->user(self::DIRECTOR), 2026)['longPartArticle']);
     }
 
     public function testSickLeaveFiledByHrIsApprovedAtOnceAndMayOverlapVacation(): void

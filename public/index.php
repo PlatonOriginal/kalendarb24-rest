@@ -52,6 +52,6 @@ $watch = new WatchService($storage, $rest, $notifier);
 $requests = new RequestService($storage, $structure, $roles, new WorkCalendar($rest), new DateTimeImmutable('today'), $config->allowSelfApproval, $notifier, $absence, $settings, $limits, $balances, $routes, $watch);
 $calendar = new CalendarService($structure, $roles, $limits, $settings);
 
-$dashboard = new DashboardService($storage, $structure, $roles, $balances);
+$dashboard = new DashboardService($storage, $structure, $roles, $balances, null, $rest);
 $app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $watch, $notifier, $restLog], $settings, $calendar, $limits, $balances, $routes, $dashboard, $absence);
 $app->handle(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', $_POST, $_SERVER);

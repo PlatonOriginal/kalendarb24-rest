@@ -3,10 +3,14 @@ declare(strict_types=1);
 
 namespace Kb24Rest\Vacation;
 
+use Kb24Rest\Bitrix24\RestClient;
+use Kb24Rest\Bitrix24\RestException;
 use Kb24Rest\Domain\Analytics;
 use Kb24Rest\Domain\DateRange;
+use Kb24Rest\Domain\LaborCode;
 use Kb24Rest\Domain\Status;
 use Kb24Rest\Portal\CurrentUser;
+use Kb24Rest\Portal\Portal;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Storage\Schema;
 use Kb24Rest\Structure\StructureService;
@@ -26,6 +30,7 @@ final class DashboardService
         private readonly RoleService $roles,
         private readonly ?BalanceService $balances = null,
         private readonly ?\DateTimeImmutable $now = null,
+        private readonly ?RestClient $rest = null,
     ) {
     }
 
@@ -124,7 +129,28 @@ final class DashboardService
                 'headcount' => count($users),
             ],
             'speed' => $this->roles->can($user, 'dashboardSpeed') ? $this->speed($user, $items, $yearRange, $visible, $now) : null,
+            // Подпись к плитке «Нет части отпуска от 14 дней»: статья кодекса страны портала или пусто
+            'longPartArticle' => LaborCode::longPartArticle(LaborCode::country($this->license($portal), $portal->domain)),
         ];
+    }
+
+    /** Тариф портала с префиксом региона (app.info, LICENSE). Без ответа портала страну определит адрес. */
+    private function license(Portal $portal): string
+    {
+        if ($this->rest === null)
+        {
+            return '';
+        }
+        try
+        {
+            $info = $this->rest->call($portal, 'app.info');
+        }
+        catch (RestException)
+        {
+            return '';
+        }
+
+        return is_array($info) ? (string)($info['LICENSE'] ?? '') : '';
     }
 
     /**
