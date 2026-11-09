@@ -43,6 +43,8 @@ final class SettingsTest extends TestCase
         $portal = $this->portal($domain);
 
         self::assertSame($min, $settings->minAnnualDays($portal));
+        // Норма не сохранена: действует минимум страны
+        self::assertSame($min, $settings->annualDays($portal));
         self::assertSame($article, $settings->annualDaysArticle($portal));
 
         $settings->setAnnualDays($portal, $min);
