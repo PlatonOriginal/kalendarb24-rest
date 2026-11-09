@@ -6,6 +6,7 @@ namespace Kb24Rest\Http;
 use Kb24Rest\Bitrix24\OAuthClient;
 use Kb24Rest\Bitrix24\RestClient;
 use Kb24Rest\Bitrix24\RestException;
+use Kb24Rest\Domain\LaborCode;
 use Kb24Rest\Portal\CurrentUser;
 use Kb24Rest\Portal\Portal;
 use Kb24Rest\Portal\PortalStore;
@@ -329,7 +330,7 @@ final class App
             'kinds' => array_map(static fn(array $kind) => $kind['name'], Kinds::all()),
             'reasons' => RejectReasons::all(),
             // Только тем, кому открыты «Настройки»: остальным лишний вызов REST при каждом открытии ни к чему
-            'settings' => $settings ? ($this->settings?->all($user->portal) ?? Settings::DEFAULTS) : null,
+            'settings' => $settings ? $this->settingsView($user) : null,
             'limits' => $settings && $this->limits !== null ? $this->limitsByDepartment($user) : null,
             // Для лимитов на вкладке «Настройки» и фильтра на «Остатках»: все отделы, независимо от того, какие видны в календаре
             'departments' => $settings || ($this->balances?->canView($user) ?? false) ? $this->departmentTree($user) : null,
@@ -432,7 +433,7 @@ final class App
             $value = trim((string)$post['annual_days']);
             if (!preg_match('/^\d+$/', $value))
             {
-                throw new VacationError('Ежегодный отпуск: от 28 до 100 календарных дней');
+                throw new VacationError($this->settings->annualDaysError($user->portal));
             }
             $this->settings->setAnnualDays($user->portal, (int)$value);
         }
@@ -441,7 +442,22 @@ final class App
             $this->settings->setMinSubmitExemptUnpaid($user->portal, $post['min_submit_exempt_unpaid'] === '1');
         }
 
-        return $this->settings->all($user->portal);
+        return $this->settingsView($user);
+    }
+
+    /** Настройки для вкладки «Настройки»: значения и пределы нормы ежегодного отпуска по стране портала */
+    private function settingsView(CurrentUser $user): array
+    {
+        if ($this->settings === null)
+        {
+            return Settings::DEFAULTS + ['annual_days_min' => LaborCode::DEFAULT_MIN_ANNUAL_DAYS, 'annual_days_max' => Settings::MAX_ANNUAL_DAYS, 'annual_days_article' => ''];
+        }
+
+        return $this->settings->all($user->portal) + [
+            'annual_days_min' => $this->settings->minAnnualDays($user->portal),
+            'annual_days_max' => Settings::MAX_ANNUAL_DAYS,
+            'annual_days_article' => $this->settings->annualDaysArticle($user->portal),
+        ];
     }
 
     private function toApprove(CurrentUser $user): array

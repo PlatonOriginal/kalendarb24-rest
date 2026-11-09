@@ -16,6 +16,17 @@ final class LaborCodeTest extends TestCase
         self::assertSame('', LaborCode::longPartArticle(''));
     }
 
+    public function testMinAnnualDaysDependsOnCountry(): void
+    {
+        self::assertSame(28, LaborCode::minAnnualDays('ru'));
+        self::assertSame(24, LaborCode::minAnnualDays('by'));
+        self::assertSame(20, LaborCode::minAnnualDays('kz'));
+        self::assertSame(20, LaborCode::minAnnualDays(''));
+        self::assertSame('ст. 115 ТК РФ', LaborCode::annualDaysArticle('ru'));
+        self::assertSame('ст. 155 ТК РБ', LaborCode::annualDaysArticle('by'));
+        self::assertSame('', LaborCode::annualDaysArticle(''));
+    }
+
     public function testCountryFromLicensePrefixFirst(): void
     {
         self::assertSame('by', LaborCode::country('by_pro100', 'company.bitrix24.ru'));

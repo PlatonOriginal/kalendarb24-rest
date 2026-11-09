@@ -386,6 +386,14 @@
         el('tab-settings').querySelectorAll('input, button').forEach(function (input) { input.disabled = readOnly; });
         el('cancel-days').value = state.me.settings ? state.me.settings.max_cancel_working_days : '';
         el('annual-days').value = state.me.settings ? state.me.settings.annual_days : '';
+        if (state.me.settings && state.me.settings.annual_days_min) {
+            // Нижний предел по стране портала: РФ 28 (ст. 115 ТК РФ), РБ 24 (ст. 155 ТК РБ), остальные 20
+            var s = state.me.settings;
+            el('annual-days').min = s.annual_days_min;
+            el('annual-days').max = s.annual_days_max;
+            el('annual-days-range').textContent = 'от ' + s.annual_days_min + ' до ' + s.annual_days_max
+                + (s.annual_days_article ? ', ' + s.annual_days_article : '');
+        }
         el('min-submit-exempt-unpaid').checked = !!(state.me.settings && state.me.settings.min_submit_exempt_unpaid);
     }
 

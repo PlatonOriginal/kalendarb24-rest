@@ -99,8 +99,8 @@
         </div>
         <div class="panel" id="settings-annual">
             <h2>Ежегодный отпуск</h2>
-            <p class="hint">Сколько календарных дней начисляется в каждую годовщину приёма на работу (от 28 до 100). Остатки и даты приёма вносят на вкладке «Остатки».</p>
-            <label>Дней за рабочий год <input type="number" id="annual-days" min="28" max="100"></label>
+            <p class="hint">Сколько календарных дней начисляется в каждую годовщину приёма на работу (<span id="annual-days-range">от 20 до 100</span>). Остатки и даты приёма вносят на вкладке «Остатки».</p>
+            <label>Дней за рабочий год <input type="number" id="annual-days" min="20" max="100"></label>
         </div>
     </div>
     <p><button type="button" id="save-options" class="primary">Сохранить настройки</button></p>
