@@ -4,13 +4,40 @@ declare(strict_types=1);
 namespace Kb24Rest\Domain;
 
 /**
- * Ссылки на трудовой кодекс страны портала. Нормы приложения одинаковы для всех стран,
- * меняется только подпись: для стран без сверенной статьи ссылки нет.
+ * Нормы и ссылки на трудовой кодекс страны портала. Для стран без сверенной статьи ссылки нет.
  */
 final class LaborCode
 {
     public const RU = 'ru';
     public const BY = 'by';
+
+    /** Минимум ежегодного отпуска, когда страна портала неизвестна или для неё норма не сверена */
+    public const DEFAULT_MIN_ANNUAL_DAYS = 20;
+
+    /**
+     * Наименьшая норма ежегодного отпуска за рабочий год.
+     * РФ: 28 календарных дней, ст. 115 ТК РФ. РБ: основной отпуск не менее 24 календарных дней, ст. 155 ТК РБ.
+     */
+    public static function minAnnualDays(string $country): int
+    {
+        return match ($country)
+        {
+            self::RU => 28,
+            self::BY => 24,
+            default => self::DEFAULT_MIN_ANNUAL_DAYS,
+        };
+    }
+
+    /** Статья о продолжительности ежегодного отпуска или пусто */
+    public static function annualDaysArticle(string $country): string
+    {
+        return match ($country)
+        {
+            self::RU => 'ст. 115 ТК РФ',
+            self::BY => 'ст. 155 ТК РБ',
+            default => '',
+        };
+    }
 
     /**
      * Статья о части ежегодного отпуска не меньше 14 календарных дней.

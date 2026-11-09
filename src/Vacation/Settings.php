@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace Kb24Rest\Vacation;
 
 use Kb24Rest\Bitrix24\RestClient;
+use Kb24Rest\Bitrix24\RestException;
+use Kb24Rest\Domain\LaborCode;
 use Kb24Rest\Portal\Portal;
 
 /**
@@ -15,7 +17,7 @@ final class Settings
 {
     /**
      * Как в коробке: max_cancel_working_days по умолчанию 3, календарь других отделов сотрудникам не виден (0),
-     * ежегодный отпуск 28 календарных дней за рабочий год.
+     * ежегодный отпуск 28 календарных дней за рабочий год. Нижний предел нормы зависит от страны портала (LaborCode).
      */
     public const DEFAULTS = [
         'max_cancel_working_days' => 3,
@@ -36,8 +38,14 @@ final class Settings
     /** Настройки «да или нет»: хранятся как 0 и 1 */
     public const FLAGS = ['employees_see_other_departments', 'min_submit_exempt_unpaid', 'cancel_routes_ready', 'kind_routes_ready', 'default_route_removed'];
 
+    /** Верхний предел нормы ежегодного отпуска */
+    public const MAX_ANNUAL_DAYS = 100;
+
     /** @var array<string, array<string, int>> */
     private array $cache = [];
+
+    /** @var array<string, string> страна портала по member_id */
+    private array $countries = [];
 
     public function __construct(private readonly RestClient $rest)
     {
@@ -88,21 +96,59 @@ final class Settings
     }
 
     /**
-     * Сколько календарных дней ежегодного отпуска начисляется в каждую годовщину приёма (от 28 до 100, как в коробке).
+     * Сколько календарных дней ежегодного отпуска начисляется в каждую годовщину приёма:
+     * от минимума страны портала (РФ 28, РБ 24, остальные 20) до 100.
      */
     public function annualDays(Portal $portal): int
     {
-        return min(100, max(28, $this->all($portal)['annual_days']));
+        return min(self::MAX_ANNUAL_DAYS, max($this->minAnnualDays($portal), $this->all($portal)['annual_days']));
     }
 
     public function setAnnualDays(Portal $portal, int $days): void
     {
-        if ($days < 28 || $days > 100)
+        if ($days < $this->minAnnualDays($portal) || $days > self::MAX_ANNUAL_DAYS)
         {
-            throw new VacationError('Ежегодный отпуск: от 28 до 100 календарных дней');
+            throw new VacationError($this->annualDaysError($portal));
         }
         $this->rest->call($portal, 'app.option.set', ['options' => ['annual_days' => $days]]);
         unset($this->cache[$portal->memberId]);
+    }
+
+    /** Наименьшая норма ежегодного отпуска для страны портала */
+    public function minAnnualDays(Portal $portal): int
+    {
+        return LaborCode::minAnnualDays($this->country($portal));
+    }
+
+    /** Статья кодекса о продолжительности ежегодного отпуска для подсказки в настройках, или пусто */
+    public function annualDaysArticle(Portal $portal): string
+    {
+        return LaborCode::annualDaysArticle($this->country($portal));
+    }
+
+    public function annualDaysError(Portal $portal): string
+    {
+        return 'Ежегодный отпуск: от ' . $this->minAnnualDays($portal) . ' до ' . self::MAX_ANNUAL_DAYS . ' календарных дней';
+    }
+
+    /** Страна портала: по тарифу из app.info, без ответа портала — по зоне адреса */
+    private function country(Portal $portal): string
+    {
+        if (!isset($this->countries[$portal->memberId]))
+        {
+            try
+            {
+                $info = $this->rest->call($portal, 'app.info');
+                $license = is_array($info) ? (string)($info['LICENSE'] ?? '') : '';
+            }
+            catch (RestException)
+            {
+                $license = '';
+            }
+            $this->countries[$portal->memberId] = LaborCode::country($license, $portal->domain);
+        }
+
+        return $this->countries[$portal->memberId];
     }
 
     public function minSubmitDays(Portal $portal): int
