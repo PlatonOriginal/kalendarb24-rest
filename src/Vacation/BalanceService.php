@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Kb24Rest\Vacation;
 
+use Kb24Rest\Domain\LaborCode;
 use Kb24Rest\Domain\Accrual;
 use Kb24Rest\Domain\Status;
 use Kb24Rest\Portal\CurrentUser;
@@ -185,7 +186,7 @@ final class BalanceService
 
     public function annualDays(Portal $portal): int
     {
-        return $this->settings?->annualDays($portal) ?? Settings::DEFAULTS['annual_days'];
+        return $this->settings?->annualDays($portal) ?? LaborCode::minAnnualDays(LaborCode::RU);
     }
 
     private function write(CurrentUser $user, int $userId, string $days, string $asOf, string $comment, ?string $hireDate): void

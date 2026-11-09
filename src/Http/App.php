@@ -450,10 +450,11 @@ final class App
     {
         if ($this->settings === null)
         {
-            return Settings::DEFAULTS + ['annual_days_min' => LaborCode::DEFAULT_MIN_ANNUAL_DAYS, 'annual_days_max' => Settings::MAX_ANNUAL_DAYS, 'annual_days_article' => ''];
+            return ['annual_days' => LaborCode::DEFAULT_MIN_ANNUAL_DAYS] + Settings::DEFAULTS + ['annual_days_min' => LaborCode::DEFAULT_MIN_ANNUAL_DAYS, 'annual_days_max' => Settings::MAX_ANNUAL_DAYS, 'annual_days_article' => ''];
         }
 
-        return $this->settings->all($user->portal) + [
+        // Норма, которая действует сейчас: пока её не сохранили, это минимум страны портала
+        return ['annual_days' => $this->settings->annualDays($user->portal)] + $this->settings->all($user->portal) + [
             'annual_days_min' => $this->settings->minAnnualDays($user->portal),
             'annual_days_max' => Settings::MAX_ANNUAL_DAYS,
             'annual_days_article' => $this->settings->annualDaysArticle($user->portal),
