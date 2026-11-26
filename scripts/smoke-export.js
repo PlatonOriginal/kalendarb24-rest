@@ -1,6 +1,7 @@
 /**
  * Смоук-тест сборки XLSX в Node: прогоняет export.js от запроса к /api/export до записи файла,
  * затем перечитывает файл и проверяет шапку, данные и строку «Итого дней».
+ * Второй прогон без заявок: окно остаётся открытым с сообщением, файл не создаётся.
  * Запуск: node scripts/smoke-export.js
  */
 'use strict';
@@ -61,9 +62,11 @@ const items = [
     { id: 1, userId: 31, deptId: 14, kind: 'vacation', status: 'approved', dateFrom: '2026-11-09', dateTo: '2026-11-22', days: 14, approvers: [30, 40, 1], approvedAt: '2026-10-27' },
     { id: 2, userId: 30, deptId: 14, kind: 'sick', status: 'approved', dateFrom: '2026-11-02', dateTo: '2026-11-05', days: 4, approvers: [], approvedAt: '2026-10-27' },
 ];
+// Сценарий 2 переключает на пустой список
+let apiItems = items;
 
 Kb24Export.init({
-    api: () => Promise.resolve({ items }),
+    api: () => Promise.resolve({ items: apiItems }),
     esc: s => String(s),
     me: () => ({ kinds: { vacation: 'Ежегодный оплачиваемый отпуск', sick: 'Больничный' } }),
     name: id => 'Короткое имя ' + id,
@@ -139,4 +142,30 @@ function check(file) {
     assert('ширины колонок', (ws['!cols'] || []).length, 12);
 
     console.log('OK: ' + base + ' — шапка, данные, итог и виза на месте');
+    emptyResponse();
+}
+
+// --- сценарий 2: заявок нет — окно остаётся с сообщением, файл не создаётся ---
+
+function emptyResponse() {
+    apiItems = [];
+    const before = fs.readdirSync(outDir).length;
+    Kb24Export.fromDashboard({
+        year: 2026,
+        departmentId: 0,
+        departments: [{ id: 1, name: 'Компания' }],
+    });
+    if (!overlay) { throw new Error('окно выгрузки не открылось'); }
+    overlay.querySelector('[data-role="download"]').click();
+    const note = overlay.querySelector('[data-role="note"]');
+    const deadline = Date.now() + 10000;
+    (function waitNote() {
+        if (String(note.textContent).indexOf('Нет заявок') !== -1) {
+            if (fs.readdirSync(outDir).length !== before) { throw new Error('без заявок файл создавать нельзя'); }
+            console.log('OK: пустой ответ — сообщение вместо «Готовим файл…», файл не создан');
+            return;
+        }
+        if (Date.now() > deadline) { throw new Error('сообщение об отсутствии заявок не показано, в окне: ' + JSON.stringify(note.textContent)); }
+        setTimeout(waitNote, 100);
+    })();
 }
