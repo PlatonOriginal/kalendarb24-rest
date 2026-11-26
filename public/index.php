@@ -16,6 +16,7 @@ use Kb24Rest\Vacation\AbsenceCalendar;
 use Kb24Rest\Vacation\BalanceService;
 use Kb24Rest\Vacation\CalendarService;
 use Kb24Rest\Vacation\DashboardService;
+use Kb24Rest\Vacation\ExportService;
 use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\Notifier;
 use Kb24Rest\Vacation\RequestService;
@@ -53,5 +54,5 @@ $requests = new RequestService($storage, $structure, $roles, new WorkCalendar($r
 $calendar = new CalendarService($structure, $roles, $limits, $settings);
 
 $dashboard = new DashboardService($storage, $structure, $roles, $balances, null, $rest);
-$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $watch, $notifier, $restLog], $settings, $calendar, $limits, $balances, $routes, $dashboard, $absence);
+$app = new App($portals, $oauth, $rest, new UserResolver($portals, $rest, $pdo), $structure, $storage, $roles, $requests, dirname(__DIR__) . '/templates', $config->appUrl, [$absence, $watch, $notifier, $restLog], $settings, $calendar, $limits, $balances, $routes, $dashboard, new ExportService($storage, $roles), $absence);
 $app->handle(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', $_POST, $_SERVER);

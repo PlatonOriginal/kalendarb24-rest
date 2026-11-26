@@ -563,6 +563,14 @@
                 showError: showError,
                 showMessage: showMessage
             });
+            window.Kb24Export.init({
+                api: api,
+                esc: esc,
+                me: function () { return state.me; },
+                name: name,
+                rememberName: function (id, text) { state.names[id] = text; },
+                showError: showError
+            });
             window.Kb24Calendar.init({
                 api: api,
                 esc: esc,
@@ -573,6 +581,7 @@
                 status: status,
                 statusName: function (code) { return STATUS[code] || code; },
                 openCard: function (id) { openCard(id); },
+                exportCalendar: function (payload) { window.Kb24Export.fromCalendar(payload); },
                 createFrom: function (date) {
                     location.hash = 'requests';
                     openTab('requests');
@@ -590,6 +599,7 @@
                 formatDays: window.Kb24Balance.formatDays,
                 showError: showError,
                 openCard: function (id) { openCard(id); },
+                exportDashboard: function (payload) { window.Kb24Export.fromDashboard(payload); },
                 calendarDepartments: function () {
                     return state.me.access.calendar === 'none' ? [] : state.me.calendar.departments.map(function (d) { return d.id; });
                 },

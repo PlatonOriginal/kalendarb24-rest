@@ -99,6 +99,7 @@ button.danger { color: #ff5752; }
 .kb-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(15, 23, 42, .4); display: flex; align-items: flex-start; justify-content: center; padding: 60px 16px; overflow-y: auto; }
 .kb-modal { width: 100%; max-width: 520px; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, .2); }
 .kb-modal h3 { margin: 0 0 14px; font-size: 18px; }
+.kb-modal label.check { display: flex; align-items: center; gap: 6px; margin: 4px 0; color: #525c69; }
 .kb-day-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .kb-day-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--kb-border); font-size: 13px; }
 .kb-day-list .kb-chip { display: inline-block; }

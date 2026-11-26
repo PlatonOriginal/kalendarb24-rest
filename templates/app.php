@@ -123,6 +123,8 @@
 <script src="/assets/routes.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/routes.js') ?>"></script>
 <script src="/assets/dashboard.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/dashboard.js') ?>"></script>
 <script src="/assets/access.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/access.js') ?>"></script>
+<script src="/assets/vendor/xlsx.full.min.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vendor/xlsx.full.min.js') ?>"></script>
+<script src="/assets/export.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/export.js') ?>"></script>
 <script src="/assets/picker.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/picker.js') ?>"></script>
 <script src="/assets/tour.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/tour.js') ?>"></script>
 <script src="/assets/vacation.js?v=<?= @filemtime(dirname(__DIR__) . '/public/assets/vacation.js') ?>"></script>

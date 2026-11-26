@@ -110,7 +110,8 @@ window.Kb24Calendar = (function () {
             + '<button type="button" data-role="prev" title="Назад">←</button>'
             + '<span class="kb-period">' + esc(periodTitle()) + '</span>'
             + '<button type="button" data-role="next" title="Вперёд">→</button>'
-            + '<button type="button" data-role="today">Сегодня</button></div></div>'
+            + '<button type="button" data-role="today">Сегодня</button>'
+            + '<button type="button" data-role="export" title="Скачать график отсутствий отдела за выбранный период">Выгрузить в Excel</button></div></div>'
             + '</div>' + legend() + '</div>'
             + '<p class="hint">Нажмите на день, чтобы увидеть, кто отсутствует, и подать заявку с этой даты. '
             + 'Красным отмечены дни, когда лимит отдела уже исчерпан.</p>'
@@ -124,6 +125,17 @@ window.Kb24Calendar = (function () {
         box.querySelector('[data-role="prev"]').addEventListener('click', function () { shift(-1); });
         box.querySelector('[data-role="next"]').addEventListener('click', function () { shift(1); });
         box.querySelector('[data-role="today"]').addEventListener('click', function () { state.anchor = startOfMonth(new Date()); render(); });
+        box.querySelector('[data-role="export"]').addEventListener('click', function () {
+            var bounds = state.bounds || periodBounds();
+            ctx.exportCalendar({
+                departmentId: state.departmentId,
+                departmentName: (departments.filter(function (d) { return d.id === state.departmentId; })[0] || {}).name || '',
+                employeeId: state.employeeId,
+                from: ymd(bounds[0]),
+                to: ymd(bounds[1]),
+                period: periodTitle()
+            });
+        });
         var select = box.querySelector('[data-role="department"]');
         if (select) {
             select.addEventListener('change', function () {
@@ -385,7 +397,7 @@ window.Kb24Calendar = (function () {
 
     return {
         /**
-         * @param {object} context api, esc, me, loadNames, name, rememberName, status, statusName, openCard, createFrom
+         * @param {object} context api, esc, me, loadNames, name, rememberName, status, statusName, openCard, exportCalendar, createFrom
          */
         init: function (context) {
             ctx = context;
