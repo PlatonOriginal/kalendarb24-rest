@@ -117,7 +117,10 @@ window.Kb24Dashboard = (function () {
         root().innerHTML = '<div class="form kb-dash-toolbar">'
             + '<label>Год <span class="kb-nav"><button type="button" data-role="prev" title="Предыдущий год">←</button>'
             + '<b>' + data.year + '</b><button type="button" data-role="next" title="Следующий год">→</button></span></label>'
-            + (data.departments.length ? '<label>Отдел <select data-role="department">' + options + '</select></label>' : '')
+            + (data.departments.length
+                ? '<label>Отдел <select data-role="department">' + options + '</select></label>'
+                  + '<button type="button" data-role="export" title="Скачать сводный график отпусков за год">Выгрузить в Excel</button>'
+                : '')
             + '</div>'
             + (data.departments.length
                 ? '<div data-role="rest"></div><div data-role="load"></div>' + (data.speed ? '<div data-role="speed"></div>' : '')
@@ -134,6 +137,16 @@ window.Kb24Dashboard = (function () {
                 view.group = '';
                 view.zero = '';
                 drawSections();
+            });
+            // Отдел в скоупе пересчитываем при клике: фильтр отдела меняется без перерисовки кнопки
+            holder('export').addEventListener('click', function () {
+                var scope = inScope();
+                ctx.exportDashboard({
+                    year: view.year,
+                    departmentId: view.departmentId,
+                    departments: view.data.departments.filter(function (d) { return !scope || scope[d.id]; })
+                        .map(function (d) { return { id: d.id, name: d.name }; })
+                });
             });
             bindTooltip();
             drawSections();
@@ -454,7 +467,7 @@ window.Kb24Dashboard = (function () {
 
     return {
         /**
-         * @param {object} context api, esc, loadNames, name, formatDays, showError, openCard, openCalendar, calendarDepartments
+         * @param {object} context api, esc, loadNames, name, formatDays, showError, openCard, exportDashboard, openCalendar, calendarDepartments
          */
         init: function (context) { ctx = context; },
         show: show

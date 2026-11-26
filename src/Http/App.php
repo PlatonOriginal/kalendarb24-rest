@@ -65,6 +65,7 @@ use Kb24Rest\Vacation\VacationError;
  *   /api/access/save       (POST role: JSON {id, name, userIds, departmentIds, tabs, scope}) сохранить роль
  *   /api/access/delete     (POST id) удалить роль
  *   /api/dashboard         (POST year) дашборд за год: доступ к вкладке «Дашборд», отделы по видимости роли
+ *   /api/export            (POST scope=calendar|dashboard, from, to, departments: JSON, pending, kinds: JSON, employee) заявки для выгрузки графика в Excel: только ID
  * События портала:
  *   /event      ONAPPUPDATE (сохраняем application_token), ONAPPUNINSTALL (удаляем данные портала с сервера)
  */
@@ -95,6 +96,7 @@ final class App
         private readonly ?BalanceService $balances = null,
         private readonly ?RouteService $routes = null,
         private readonly ?DashboardService $dashboard = null,
+        private readonly ?ExportService $export = null,
         private readonly ?AbsenceCalendar $absence = null,
     ) {
     }
@@ -205,6 +207,16 @@ final class App
                     (int)($post['department'] ?? 0),
                     (string)($post['from'] ?? ''),
                     (string)($post['to'] ?? ''),
+                )),
+                $path === '/api/export' && $this->isPost($server) && $this->export !== null => $this->json($this->export->list(
+                    $this->currentUser($server),
+                    (string)($post['scope'] ?? ''),
+                    (string)($post['from'] ?? ''),
+                    (string)($post['to'] ?? ''),
+                    array_values(array_filter(array_map('intval', (array)json_decode((string)($post['departments'] ?? ''), true)))),
+                    ($post['pending'] ?? '') === '1',
+                    array_values(array_filter((array)json_decode((string)($post['kinds'] ?? ''), true), 'is_string')),
+                    (int)($post['employee'] ?? 0),
                 )),
                 $path === '/api/routes' && $this->routes !== null => $this->json($this->routes->list($this->currentUser($server))),
                 $path === '/api/routes/save' && $this->isPost($server) && $this->routes !== null => $this->json($this->routes->save(
