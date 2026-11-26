@@ -114,9 +114,11 @@ window.Kb24Export = (function () {
             say('Готовим файл…');
             Promise.resolve(payload.onExport({ pending: overlay.querySelector('[data-role="pending"]').checked, kinds: selected }))
                 .then(function (saved) {
-                    if (saved !== false) {
-                        overlay.remove();
+                    if (saved === false) {
+                        say('Нет заявок для выгрузки по выбранным параметрам');
+                        return;
                     }
+                    overlay.remove();
                 })
                 .catch(function (error) {
                     say(error && error.message ? error.message : 'Не удалось выгрузить файл', true);
@@ -187,7 +189,8 @@ window.Kb24Export = (function () {
 
     /**
      * Заявки с сервера, ФИО и должности из портала, файл XLSX локально.
-     * Возвращает false, когда заявок нет: файл не создаём, в окне остаётся подсказка.
+     * Возвращает false, когда заявок нет: файл не создаём, в окне показываем сообщение,
+     * что заявок по выбранным параметрам нет (окно остаётся открытым).
      */
     function download(scope, filter, options) {
         return ctx.api('/api/export', {
