@@ -9,6 +9,7 @@ use Kb24Rest\Http\App;
 use Kb24Rest\Portal\UserResolver;
 use Kb24Rest\Storage\EntityStorage;
 use Kb24Rest\Structure\StructureService;
+use Kb24Rest\Vacation\ExportService;
 use Kb24Rest\Vacation\RequestService;
 use Kb24Rest\Vacation\RoleService;
 use Kb24Rest\Vacation\WorkCalendar;
@@ -26,7 +27,8 @@ final class AppTest extends TestCase
         $roles = new RoleService($storage, $structure);
 
         return new App($store, $oauth, $rest, new UserResolver($store, $rest), $structure, $storage, $roles,
-            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates', $appUrl);
+            new RequestService($storage, $structure, $roles, new WorkCalendar($rest)), dirname(__DIR__) . '/templates', $appUrl,
+            [], null, null, null, null, null, null, new ExportService($storage, $roles));
     }
 
     private function request(App $app, string $path, array $post = [], array $server = []): string

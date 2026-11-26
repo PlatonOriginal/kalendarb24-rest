@@ -18,6 +18,7 @@ use Kb24Rest\Vacation\AbsenceCalendar;
 use Kb24Rest\Vacation\BalanceService;
 use Kb24Rest\Vacation\CalendarService;
 use Kb24Rest\Vacation\DashboardService;
+use Kb24Rest\Vacation\ExportService;
 use Kb24Rest\Vacation\Kinds;
 use Kb24Rest\Vacation\LimitService;
 use Kb24Rest\Vacation\RejectReasons;
